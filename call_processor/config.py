@@ -35,7 +35,12 @@ DEFAULTS: dict = {
         "smtp_port": 587,
         "from": "",   # your Gmail address; app password goes in .env as GMAIL_APP_PASSWORD
         "to": [],     # recipients; empty = send to yourself (the "from" address)
+        "send_to_participants": False,  # email matched participants their reflection
     },
+    "reflections": {
+        "enabled": False,  # generate a personal reflection per non-owner participant
+    },
+    "contacts_file": "./contacts.yaml",
     "speakers": {},
     "paths": {
         "output_dir": "./output",
@@ -82,6 +87,32 @@ def load_config(config_path: str | Path | None = None) -> dict:
     elif config_path:
         raise FileNotFoundError(f"Config file not found: {config_path}")
     return config
+
+
+def load_contacts(path: str | Path | None) -> dict[str, str]:
+    """Load contacts.yaml: {participant name: email}. Missing file = empty dict."""
+    path = Path(path or "contacts.yaml")
+    if not path.is_file():
+        return {}
+    with open(path) as f:
+        data = yaml.safe_load(f) or {}
+    return {str(k).strip(): str(v).strip() for k, v in data.items() if v}
+
+
+def match_contact(name: str, contacts: dict[str, str]) -> str | None:
+    """Match a transcript speaker name to a contact email.
+
+    Exact (case-insensitive) match first; otherwise a unique first-name match
+    (so 'Scott' in contacts matches speaker 'Scott Whatever' and vice versa).
+    """
+    target = name.strip().casefold()
+    for contact_name, email in contacts.items():
+        if contact_name.strip().casefold() == target:
+            return email
+    first = target.split()[0] if target else ""
+    matches = [email for contact_name, email in contacts.items()
+               if contact_name.strip().casefold().split()[0] == first]
+    return matches[0] if len(matches) == 1 else None
 
 
 def parse_speaker_map(arg: str | None) -> dict[str, str]:

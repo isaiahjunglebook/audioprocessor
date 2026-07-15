@@ -25,6 +25,14 @@ email:
   smtp_port: 587
   from: "you@gmail.com"     # sender; app password goes in .env as GMAIL_APP_PASSWORD
   to: []                    # recipients; empty list = send to yourself
+  send_to_participants: false  # true = email each matched participant their reflection
+                               # (leave false to review drafts in output/<call>/reflections/)
+
+reflections:
+  enabled: false            # generate a personal reflection per participant
+                            # (threads to bring to their counsellor, patterns, etc.)
+
+contacts_file: ./contacts.yaml  # participant name -> email (see contacts.example.yaml)
 
 speakers: {}                # optional overrides keyed by filename stem,
                             # e.g. audio1234: "Isaiah"

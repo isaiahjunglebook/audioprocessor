@@ -91,6 +91,41 @@ def generate_summary(client, transcript_md: str, *, call_name: str, date: str,
     )
 
 
+_TITLE_SYSTEM = """You are given the opening lines of a call transcript. The host may announce
+the meeting's title out loud at the start, e.g. "August first, twenty twenty-six — Squad One,
+Call One" or "This is my one-on-one with Chris".
+
+If a title is announced, return it as one short line, normalized like these examples:
+2026-08-01 – Squad 1, Call 1
+2026-08-01 – Isaiah, Chris
+
+If NO title is announced, return exactly: NONE
+Return only the title line or NONE — nothing else."""
+
+
+def extract_call_title(client, opening_text: str, *, model: str) -> str | None:
+    """Pull a spoken meeting title from the first moments of the call, if any."""
+    text = _complete(client, system=_TITLE_SYSTEM, user_content=opening_text,
+                     model=model, max_tokens=100)
+    text = text.strip().splitlines()[0].strip() if text.strip() else "NONE"
+    if text.upper() == "NONE" or len(text) > 90:
+        return None
+    return text
+
+
+def generate_reflection(client, *, name: str, transcript_md: str, profile_md: str,
+                        call_name: str, date: str, model: str, max_tokens: int) -> str:
+    """Personal post-call reflection for one participant (see prompts/reflection.md)."""
+    system = _load_prompt("reflection").replace("<Name>", name)
+    user_content = (
+        f"Participant: {name}\nCall: {call_name}\nDate: {date}\n\n"
+        f"Their profile from previous calls:\n\n{profile_md or '(first call — no profile yet)'}\n\n"
+        f"---\n\nTranscript:\n\n{transcript_md}"
+    )
+    return _complete(client, system=system, user_content=user_content,
+                     model=model, max_tokens=max_tokens)
+
+
 def update_profile(client, *, name: str, transcript_md: str, call_name: str, date: str,
                    profiles_dir: Path, model: str, max_tokens: int) -> Path:
     """Load, update via Claude, and overwrite profiles/<name>.md."""
@@ -113,11 +148,12 @@ def update_profile(client, *, name: str, transcript_md: str, call_name: str, dat
 
 def run_intelligence_layer(*, transcript_md: str, call_name: str, call_slug: str,
                            date: str, participants: list[str], cfg: dict
-                           ) -> tuple[Path | None, list[Path]]:
-    """Write output/<slug>/summary.md and update profiles for non-owner participants.
+                           ) -> tuple[Path | None, list[Path], dict[str, Path]]:
+    """Write output/<slug>/summary.md, update profiles, and (if enabled) generate
+    a personal reflection per non-owner participant.
 
     Failures are logged and never abort the run — the transcript is already saved.
-    Returns (summary_path or None, [updated profile paths]).
+    Returns (summary_path or None, [updated profile paths], {name: reflection path}).
     """
     model = cfg["summarize"]["model"]
     max_tokens = cfg["summarize"]["max_tokens"]
@@ -129,13 +165,17 @@ def run_intelligence_layer(*, transcript_md: str, call_name: str, call_slug: str
         summary = generate_summary(client, transcript_md, call_name=call_name,
                                    date=date, model=model, max_tokens=max_tokens)
         summary_path = Path(cfg["paths"]["output_dir"]) / call_slug / "summary.md"
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(summary + "\n", encoding="utf-8")
         log.info("Wrote summary to %s", summary_path)
     except Exception as e:
         log.warning("Summary generation failed: %s", e)
 
     updated: list[Path] = []
+    reflections: dict[str, Path] = {}
+    reflections_enabled = cfg.get("reflections", {}).get("enabled", False)
     profiles_dir = Path(cfg["paths"]["profiles_dir"])
+    reflections_dir = Path(cfg["paths"]["output_dir"]) / call_slug / "reflections"
     for name in participants:
         if owner and owner in name.strip().casefold():
             log.info("Skipping profile for owner: %s", name)
@@ -149,4 +189,21 @@ def run_intelligence_layer(*, transcript_md: str, call_name: str, call_slug: str
             log.info("Updated profile: %s", path)
         except Exception as e:
             log.warning("Profile update for %s failed: %s", name, e)
-    return summary_path, updated
+        if not reflections_enabled:
+            continue
+        try:
+            safe_name = "".join(c for c in name if c not in '/\\:*?"<>|').strip() or "Unknown"
+            profile_path = profiles_dir / f"{safe_name}.md"
+            reflection = generate_reflection(
+                client, name=name, transcript_md=transcript_md,
+                profile_md=profile_path.read_text(encoding="utf-8") if profile_path.is_file() else "",
+                call_name=call_name, date=date, model=model, max_tokens=max_tokens,
+            )
+            reflections_dir.mkdir(parents=True, exist_ok=True)
+            rpath = reflections_dir / f"{safe_name}.md"
+            rpath.write_text(reflection + "\n", encoding="utf-8")
+            reflections[name] = rpath
+            log.info("Wrote reflection: %s", rpath)
+        except Exception as e:
+            log.warning("Reflection for %s failed: %s", name, e)
+    return summary_path, updated, reflections

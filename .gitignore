@@ -26,3 +26,6 @@ __pycache__/
 
 # Automation
 logs/
+
+# Private contact list
+contacts.yaml

@@ -159,6 +159,19 @@ def run(args: argparse.Namespace) -> int:
     if not turns:
         log.warning("No speech detected in any track — writing an empty transcript.")
 
+    # 3b. If no --call-name was given, try the spoken title from the call's opening
+    # ("August 1st 2026, Squad 1, Call 1" said into the mic becomes the file name).
+    if not args.call_name and summarize_enabled and turns:
+        from .summarize import extract_call_title, _client
+        opening = " ".join(t["text"] for t in turns[:8])[:1500]
+        try:
+            spoken = extract_call_title(_client(), opening, model=cfg["summarize"]["model"])
+            if spoken:
+                call_name, call_slug = spoken, slugify(spoken)
+                log.info("Using spoken call title: %s", spoken)
+        except Exception as e:
+            log.debug("Spoken-title extraction skipped: %s", e)
+
     # 4. Write transcript
     participants = sorted(set(files.values()))
     content = render_transcript(
@@ -174,10 +187,11 @@ def run(args: argparse.Namespace) -> int:
     # 5. Optional intelligence layer
     summary_path = None
     updated_profiles: list[Path] = []
+    reflections: dict[str, Path] = {}
     if summarize_enabled and turns:
         from .summarize import run_intelligence_layer
         try:
-            summary_path, updated_profiles = run_intelligence_layer(
+            summary_path, updated_profiles, reflections = run_intelligence_layer(
                 transcript_md=content,
                 call_name=call_name,
                 call_slug=call_slug,
@@ -208,6 +222,34 @@ def run(args: argparse.Namespace) -> int:
     elif email_enabled and not summary_path:
         log.info("Email skipped: no summary was generated.")
 
+    # 6b. Participant emails: each matched participant gets their personal
+    # reflection + the shared summary. Off by default (draft mode) — reflections
+    # sit in output/<slug>/reflections/ for review until send_to_participants
+    # is turned on in config.yaml.
+    if email_enabled and reflections and cfg["email"].get("send_to_participants"):
+        from .emailer import send_summary_email as _send
+        contacts = config_mod.load_contacts(cfg.get("contacts_file"))
+        summary_md = summary_path.read_text(encoding="utf-8") if summary_path else ""
+        for name, rpath in reflections.items():
+            addr = config_mod.match_contact(name, contacts)
+            if not addr:
+                log.warning("No contact email found for '%s' — reflection saved at %s "
+                            "but not sent. Add them to contacts.yaml.", name, rpath)
+                continue
+            body = rpath.read_text(encoding="utf-8")
+            if summary_md:
+                body += f"\n\n---\n\n# Shared call summary — {call_name}\n\n{summary_md}"
+            try:
+                _send(cfg, subject=f"Your reflection — {call_name}",
+                      summary_md=body, attachments=[rpath, summary_path] if summary_path else [rpath],
+                      to=[addr])
+                emailed_to.append(f"{name} <{addr}>")
+            except Exception as e:
+                log.warning("Reflection email to %s failed: %s", name, e)
+    elif reflections:
+        log.info("Reflections saved for review (draft mode): %s",
+                 ", ".join(str(p) for p in reflections.values()))
+
     # 7. Run summary
     print("\n=== Run summary ===")
     print(f"Files processed : {len(files)}")
@@ -218,6 +260,8 @@ def run(args: argparse.Namespace) -> int:
         print(f"Summary         : {summary_path}")
     if updated_profiles:
         print(f"Profiles updated: {', '.join(str(p) for p in updated_profiles)}")
+    if reflections:
+        print(f"Reflections     : {', '.join(str(p) for p in reflections.values())}")
     if emailed_to:
         print(f"Emailed to      : {', '.join(emailed_to)}")
     if not summarize_enabled:

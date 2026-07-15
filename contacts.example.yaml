@@ -1,0 +1,10 @@
+# Copy to contacts.yaml (kept private, never committed) and fill in.
+#
+# Keys are participant names AS THEY APPEAR in the transcript — i.e. their
+# Zoom display name after cleanup (run one call and check the "Speaker
+# mapping" printout, or the transcript itself, to see the exact form).
+# Matching is forgiving: exact name first, then unique first-name match.
+
+"Scott Sample": scott@example.com
+"Adam Sample": adam@example.com
+"Jack Sample": jack@example.com
