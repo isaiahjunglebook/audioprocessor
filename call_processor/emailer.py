@@ -56,9 +56,10 @@ def markdown_to_html(md: str) -> str:
     if in_list:
         out.append("</ul>")
     body = "\n".join(out)
+    # No font-family override: the email renders in the client's default font
+    # (Gmail's own sans-serif), so it looks like a native message.
     return (
-        "<html><body style='font-family: Georgia, serif; max-width: 640px; "
-        "margin: 0 auto; line-height: 1.55; color: #222;'>"
+        "<html><body style='max-width: 640px; margin: 0 auto; line-height: 1.5;'>"
         f"{body}</body></html>"
     )
 
