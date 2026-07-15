@@ -21,12 +21,12 @@ def slugify(name: str) -> str:
 
 def render_transcript(turns: list[dict], *, call_name: str, date: str,
                       participants: list[str], source_files: list[str],
-                      timestamps: bool = True) -> str:
+                      timestamps: bool = True, time: str | None = None) -> str:
     duration = max((t["end"] for t in turns), default=0)
     lines = [
         f"# {call_name}",
         "",
-        f"- **Date:** {date}",
+        f"- **Date:** {date}" + (f" · {time}" if time else ""),
         f"- **Participants:** {', '.join(participants)}",
         f"- **Duration:** {format_timestamp(duration)}",
         f"- **Source files:** {', '.join(source_files)}",

@@ -18,6 +18,20 @@ from . import config as config_mod
 from .discover import discover_files
 
 
+import re as _re
+
+_ZOOM_FOLDER = _re.compile(r"^(\d{4}-\d{2}-\d{2}) (\d{2})\.(\d{2})\.(\d{2}) (.+)$")
+
+
+def parse_zoom_folder(label: str) -> tuple[str | None, str | None, str | None]:
+    """Split Zoom's '2026-07-15 20.15.35 Where we dropping_' folder name into
+    (date, time, topic). Returns (None, None, None-ish) for non-Zoom names."""
+    m = _ZOOM_FOLDER.match(label)
+    if not m:
+        return None, None, None
+    return m.group(1), f"{m.group(2)}:{m.group(3)}", m.group(5).strip()
+
+
 def find_latest_recording(zoom_root: Path | None = None) -> Path | None:
     """Newest '<meeting>/Audio Record' folder under ~/Documents/Zoom, or None."""
     zoom_root = zoom_root or Path.home() / "Documents" / "Zoom"
@@ -102,10 +116,14 @@ def run(args: argparse.Namespace) -> int:
     else:
         log.error("Pass --input <folder> or --latest.")
         return 1
-    # Zoom's audio lives in "<meeting name>/Audio Record" — use the meeting name.
+    # Zoom's audio lives in "<date time topic>/Audio Record" — pull the pieces apart.
     folder_label = input_dir.parent.name if input_dir.name == "Audio Record" else input_dir.name
-    call_name = args.call_name or f"{folder_label} — {today}"
-    call_slug = slugify(call_name)
+    rec_date, rec_time, zoom_topic = parse_zoom_folder(folder_label)
+    call_date = rec_date or today
+    topic_clean = (zoom_topic or folder_label).rstrip("_ ").strip()
+    call_name = args.call_name or f"Call Summary: {topic_clean}"
+    # Files stay date-prefixed so output/ sorts chronologically in Finder.
+    call_slug = slugify(f"{call_date} {call_name}")
 
     # 1. Discover + resolve speakers
     try:
@@ -159,25 +177,32 @@ def run(args: argparse.Namespace) -> int:
     if not turns:
         log.warning("No speech detected in any track — writing an empty transcript.")
 
-    # 3b. If no --call-name was given, try the spoken title from the call's opening
-    # ("August 1st 2026, Squad 1, Call 1" said into the mic becomes the file name).
+    # 3b. If no --call-name was given, compose the title from the Zoom topic +
+    # the spoken opening ("this is call 4 with Turbo Squad" -> "Turbo Squad:
+    # Call 4, <topic>"; one-on-ones -> "Ludi Call Summary: <topic>").
     if not args.call_name and summarize_enabled and turns:
         from .summarize import extract_call_title, _client
         opening = " ".join(t["text"] for t in turns[:8])[:1500]
         try:
-            spoken = extract_call_title(_client(), opening, model=cfg["summarize"]["model"])
-            if spoken:
-                call_name, call_slug = spoken, slugify(spoken)
-                log.info("Using spoken call title: %s", spoken)
+            composed = extract_call_title(
+                _client(), opening_text=opening, zoom_topic=zoom_topic,
+                participants=sorted(set(files.values())),
+                owner=cfg.get("owner_name", ""), model=cfg["summarize"]["model"],
+            )
+            if composed:
+                call_name = composed
+                call_slug = slugify(f"{call_date} {composed}")
+                log.info("Composed call title: %s", composed)
         except Exception as e:
-            log.debug("Spoken-title extraction skipped: %s", e)
+            log.warning("Title composition failed (%s) — using: %s", e, call_name)
 
     # 4. Write transcript
     participants = sorted(set(files.values()))
     content = render_transcript(
         turns,
         call_name=call_name,
-        date=today,
+        date=call_date,
+        time=rec_time,
         participants=participants,
         source_files=[p.name for p in files],
         timestamps=cfg["transcript"]["timestamps"],
@@ -195,7 +220,8 @@ def run(args: argparse.Namespace) -> int:
                 transcript_md=content,
                 call_name=call_name,
                 call_slug=call_slug,
-                date=today,
+                date=call_date,
+                time=rec_time,
                 participants=participants,
                 cfg=cfg,
             )
@@ -213,7 +239,7 @@ def run(args: argparse.Namespace) -> int:
         try:
             emailed_to = send_summary_email(
                 cfg,
-                subject=f"Call summary — {call_name}",
+                subject=call_name,
                 summary_md=summary_path.read_text(encoding="utf-8"),
                 attachments=[transcript_path, summary_path],
             )

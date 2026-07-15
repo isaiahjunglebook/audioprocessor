@@ -91,24 +91,24 @@ def generate_summary(client, transcript_md: str, *, call_name: str, date: str,
     )
 
 
-_TITLE_SYSTEM = """You are given the opening lines of a call transcript. The host may announce
-the meeting's title out loud at the start, e.g. "August first, twenty twenty-six — Squad One,
-Call One" or "This is my one-on-one with Chris".
+def extract_call_title(client, *, opening_text: str, zoom_topic: str | None,
+                       participants: list[str], owner: str, model: str) -> str | None:
+    """Compose the summary title from the Zoom topic + spoken opening.
 
-If a title is announced, return it as one short line, normalized like these examples:
-2026-08-01 – Squad 1, Call 1
-2026-08-01 – Isaiah, Chris
-
-If NO title is announced, return exactly: NONE
-Return only the title line or NONE — nothing else."""
-
-
-def extract_call_title(client, opening_text: str, *, model: str) -> str | None:
-    """Pull a spoken meeting title from the first moments of the call, if any."""
-    text = _complete(client, system=_TITLE_SYSTEM, user_content=opening_text,
+    Formats (see prompts/title.md): squad calls -> "Turbo Squad: Call 4, Act I";
+    one-on-ones -> "Ludi Call Summary: Where we dropping?".
+    """
+    system = _load_prompt("title")
+    user_content = (
+        f"Zoom meeting topic: {zoom_topic or '(unknown)'}\n"
+        f"Host (owner): {owner or '(unknown)'}\n"
+        f"Participants detected from audio tracks: {', '.join(participants) or '(unknown)'}\n\n"
+        f"Opening lines of the call:\n{opening_text or '(no speech captured yet)'}"
+    )
+    text = _complete(client, system=system, user_content=user_content,
                      model=model, max_tokens=100)
-    text = text.strip().splitlines()[0].strip() if text.strip() else "NONE"
-    if text.upper() == "NONE" or len(text) > 90:
+    text = text.strip().splitlines()[0].strip().strip('"') if text.strip() else ""
+    if not text or len(text) > 90:
         return None
     return text
 
@@ -147,7 +147,8 @@ def update_profile(client, *, name: str, transcript_md: str, call_name: str, dat
 
 
 def run_intelligence_layer(*, transcript_md: str, call_name: str, call_slug: str,
-                           date: str, participants: list[str], cfg: dict
+                           date: str, participants: list[str], cfg: dict,
+                           time: str | None = None
                            ) -> tuple[Path | None, list[Path], dict[str, Path]]:
     """Write output/<slug>/summary.md, update profiles, and (if enabled) generate
     a personal reflection per non-owner participant.
@@ -164,6 +165,9 @@ def run_intelligence_layer(*, transcript_md: str, call_name: str, call_slug: str
     try:
         summary = generate_summary(client, transcript_md, call_name=call_name,
                                    date=date, model=model, max_tokens=max_tokens)
+        # Headline + date/time header, then the summary body.
+        when = f"{date} · {time}" if time else date
+        summary = f"# {call_name}\n\n**{when}**\n\n{summary}"
         summary_path = Path(cfg["paths"]["output_dir"]) / call_slug / "summary.md"
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(summary + "\n", encoding="utf-8")
