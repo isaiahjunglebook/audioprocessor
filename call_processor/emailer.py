@@ -98,7 +98,13 @@ def send_summary_email(cfg: dict, *, subject: str, summary_md: str,
 
     host = email_cfg.get("smtp_host", "smtp.gmail.com")
     port = int(email_cfg.get("smtp_port", 587))
-    context = ssl.create_default_context()
+    # macOS Pythons often lack system CA certs; use certifi's bundle (already
+    # installed as a dependency of the anthropic SDK) so TLS verification works.
+    try:
+        import certifi
+        context = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        context = ssl.create_default_context()
     with smtplib.SMTP(host, port, timeout=30) as server:
         server.starttls(context=context)
         server.login(sender, password)
