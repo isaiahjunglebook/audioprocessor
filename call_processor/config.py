@@ -29,6 +29,13 @@ DEFAULTS: dict = {
         "model": "claude-sonnet-5",
         "max_tokens": 4096,
     },
+    "email": {
+        "enabled": False,
+        "smtp_host": "smtp.gmail.com",
+        "smtp_port": 587,
+        "from": "",   # your Gmail address; app password goes in .env as GMAIL_APP_PASSWORD
+        "to": [],     # recipients; empty = send to yourself (the "from" address)
+    },
     "speakers": {},
     "paths": {
         "output_dir": "./output",

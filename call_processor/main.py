@@ -16,6 +16,16 @@ from pathlib import Path
 
 from . import config as config_mod
 from .discover import discover_files
+
+
+def find_latest_recording(zoom_root: Path | None = None) -> Path | None:
+    """Newest '<meeting>/Audio Record' folder under ~/Documents/Zoom, or None."""
+    zoom_root = zoom_root or Path.home() / "Documents" / "Zoom"
+    if not zoom_root.is_dir():
+        return None
+    candidates = [p / "Audio Record" for p in zoom_root.iterdir()
+                  if p.is_dir() and (p / "Audio Record").is_dir()]
+    return max(candidates, key=lambda p: p.stat().st_mtime, default=None)
 from .merge import merge_segments
 from .render import render_transcript, slugify, write_transcript
 
@@ -28,8 +38,13 @@ def build_parser() -> argparse.ArgumentParser:
         description="Turn a folder of per-participant audio tracks into a "
                     "speaker-labeled transcript (+ optional summary and profiles).",
     )
-    p.add_argument("--input", required=True,
+    p.add_argument("--input", default=None,
                    help="Folder of per-participant audio files (e.g. Zoom's 'Audio Record')")
+    p.add_argument("--latest", action="store_true",
+                   help="Process the most recent recording under ~/Documents/Zoom "
+                        "instead of passing --input")
+    p.add_argument("--email", action="store_true",
+                   help="Email the summary when done (uses the email: section of config)")
     p.add_argument("--call-name", default=None,
                    help="Call name for the output folder and headers "
                         "(default: input folder name + date)")
@@ -75,8 +90,21 @@ def run(args: argparse.Namespace) -> int:
     overrides = {**cfg.get("speakers", {}), **config_mod.parse_speaker_map(args.speaker_map)}
 
     today = _dt.date.today().isoformat()
-    input_dir = Path(args.input).expanduser()
-    call_name = args.call_name or f"{input_dir.name} — {today}"
+    if args.latest:
+        input_dir = find_latest_recording()
+        if input_dir is None:
+            log.error("No Zoom recording with an 'Audio Record' folder found under "
+                      "~/Documents/Zoom. Record a call first, or pass --input.")
+            return 1
+        log.info("Latest recording: %s", input_dir)
+    elif args.input:
+        input_dir = Path(args.input).expanduser()
+    else:
+        log.error("Pass --input <folder> or --latest.")
+        return 1
+    # Zoom's audio lives in "<meeting name>/Audio Record" — use the meeting name.
+    folder_label = input_dir.parent.name if input_dir.name == "Audio Record" else input_dir.name
+    call_name = args.call_name or f"{folder_label} — {today}"
     call_slug = slugify(call_name)
 
     # 1. Discover + resolve speakers
@@ -163,7 +191,24 @@ def run(args: argparse.Namespace) -> int:
     elif summarize_enabled and not turns:
         log.info("Skipping summary/profiles: no speech to summarize.")
 
-    # 6. Run summary
+    # 6. Optional email delivery
+    emailed_to: list[str] = []
+    email_enabled = args.email or cfg.get("email", {}).get("enabled", False)
+    if email_enabled and summary_path:
+        from .emailer import send_summary_email
+        try:
+            emailed_to = send_summary_email(
+                cfg,
+                subject=f"Call summary — {call_name}",
+                summary_md=summary_path.read_text(encoding="utf-8"),
+                attachments=[transcript_path, summary_path],
+            )
+        except Exception as e:
+            log.warning("Email step failed (%s). Summary is safe at %s", e, summary_path)
+    elif email_enabled and not summary_path:
+        log.info("Email skipped: no summary was generated.")
+
+    # 7. Run summary
     print("\n=== Run summary ===")
     print(f"Files processed : {len(files)}")
     print(f"Speakers        : {', '.join(participants)}")
@@ -173,6 +218,8 @@ def run(args: argparse.Namespace) -> int:
         print(f"Summary         : {summary_path}")
     if updated_profiles:
         print(f"Profiles updated: {', '.join(str(p) for p in updated_profiles)}")
+    if emailed_to:
+        print(f"Emailed to      : {', '.join(emailed_to)}")
     if not summarize_enabled:
         print("Summary/profiles: skipped (disabled or no API key)")
     return 0

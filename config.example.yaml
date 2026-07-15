@@ -19,6 +19,13 @@ summarize:
   model: claude-sonnet-5    # or claude-opus-4-8 for higher quality
   max_tokens: 4096
 
+email:
+  enabled: false            # true = email the summary after every run (or use --email)
+  smtp_host: smtp.gmail.com
+  smtp_port: 587
+  from: "you@gmail.com"     # sender; app password goes in .env as GMAIL_APP_PASSWORD
+  to: []                    # recipients; empty list = send to yourself
+
 speakers: {}                # optional overrides keyed by filename stem,
                             # e.g. audio1234: "Isaiah"
 
