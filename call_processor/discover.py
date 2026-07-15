@@ -31,7 +31,9 @@ def derive_speaker_name(stem: str) -> str | None:
     """Derive a human display name from a filename stem, or None if hopeless."""
     name = _GUID.sub("", stem)
     name = _LEADING_AUDIO_PREFIX.sub("", name)
-    if re.fullmatch(r"audio\d*", name, re.IGNORECASE):
+    # Zoom's local-recording style has no separators: "audioIsaiahEnglish11900040134".
+    name = re.sub(r"^audio(?=[A-Z0-9])", "", name)
+    if re.fullmatch(r"(audio)?\d*", name, re.IGNORECASE):
         return None  # nothing left but the Zoom "audioNNNN" artifact
     # Strip trailing numeric suffixes repeatedly (e.g. "jane_cooper_2_1").
     while True:
@@ -39,6 +41,8 @@ def derive_speaker_name(stem: str) -> str | None:
         if stripped == name:
             break
         name = stripped
+    name = re.sub(r"\d+$", "", name)  # bare trailing meeting id, no separator
+    name = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", name)  # split camelCase
     name = re.sub(r"[_-]+", " ", name).strip()
     if not name or not re.search(r"[A-Za-z]", name):
         return None
