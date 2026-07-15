@@ -1,0 +1,191 @@
+"""CLI entry point and pipeline orchestration.
+
+Pipeline: discover tracks -> resolve speakers -> transcribe each track locally
+-> merge segments by timestamp -> write transcript -> (optional) summarize +
+update participant profiles via the Claude API.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as _dt
+import logging
+import os
+import sys
+from pathlib import Path
+
+from . import config as config_mod
+from .discover import discover_files
+from .merge import merge_segments
+from .render import render_transcript, slugify, write_transcript
+
+log = logging.getLogger("call_processor")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="python -m call_processor.main",
+        description="Turn a folder of per-participant audio tracks into a "
+                    "speaker-labeled transcript (+ optional summary and profiles).",
+    )
+    p.add_argument("--input", required=True,
+                   help="Folder of per-participant audio files (e.g. Zoom's 'Audio Record')")
+    p.add_argument("--call-name", default=None,
+                   help="Call name for the output folder and headers "
+                        "(default: input folder name + date)")
+    p.add_argument("--model", default=None, help="Whisper model (e.g. large-v3, medium)")
+    p.add_argument("--language", default=None,
+                   help="Audio language code, or 'auto' to auto-detect")
+    p.add_argument("--no-summary", action="store_true",
+                   help="Transcript only; skip all Claude API calls")
+    p.add_argument("--map", dest="speaker_map", default=None,
+                   help='Speaker overrides: "filename_stem=Display Name,stem2=Name Two"')
+    p.add_argument("--config", default=None, help="Path to config.yaml")
+    p.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
+    return p
+
+
+def _make_progress():
+    """Return (progress, task_adder) using rich if available, else a no-op shim."""
+    try:
+        from rich.progress import (BarColumn, Progress, SpinnerColumn,
+                                   TextColumn, TimeElapsedColumn)
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+        )
+        return progress
+    except ImportError:
+        return None
+
+
+def run(args: argparse.Namespace) -> int:
+    config_mod.load_dotenv()
+    cfg = config_mod.load_config(args.config)
+
+    # CLI overrides
+    if args.model:
+        cfg["whisper"]["model"] = args.model
+    if args.language:
+        cfg["whisper"]["language"] = None if args.language == "auto" else args.language
+    if args.no_summary:
+        cfg["summarize"]["enabled"] = False
+    overrides = {**cfg.get("speakers", {}), **config_mod.parse_speaker_map(args.speaker_map)}
+
+    today = _dt.date.today().isoformat()
+    input_dir = Path(args.input).expanduser()
+    call_name = args.call_name or f"{input_dir.name} — {today}"
+    call_slug = slugify(call_name)
+
+    # 1. Discover + resolve speakers
+    try:
+        files = discover_files(input_dir, overrides)
+    except (FileNotFoundError, ValueError) as e:
+        log.error("%s", e)
+        return 1
+
+    print("Speaker mapping:")
+    for path, speaker in files.items():
+        print(f"  {path.name}  ->  {speaker}")
+
+    # Fail early (but keep going to the transcript) if summarize is on with no key
+    summarize_enabled = cfg["summarize"]["enabled"]
+    if summarize_enabled and not os.environ.get("ANTHROPIC_API_KEY"):
+        log.warning(
+            "Summarize is enabled but ANTHROPIC_API_KEY is not set (put it in .env). "
+            "The transcript will still be written; summary and profiles will be skipped."
+        )
+        summarize_enabled = False
+
+    # 2. Transcribe each track locally
+    from .transcribe import get_backend  # deferred: needs faster-whisper installed
+    backend = get_backend(
+        cfg["whisper"].get("backend", "faster-whisper"),
+        model_name=cfg["whisper"]["model"],
+        compute_type=cfg["whisper"]["compute_type"],
+        min_segment_duration=cfg["transcript"]["min_segment_duration"],
+    )
+
+    all_segments: list[dict] = []
+    progress = _make_progress()
+    if progress:
+        with progress:
+            task = progress.add_task("Transcribing", total=len(files))
+            for path, speaker in files.items():
+                progress.update(task, description=f"Transcribing {path.name}")
+                all_segments.extend(
+                    backend.transcribe_file(path, speaker, cfg["whisper"]["language"])
+                )
+                progress.advance(task)
+    else:
+        for path, speaker in files.items():
+            print(f"Transcribing {path.name} ...")
+            all_segments.extend(
+                backend.transcribe_file(path, speaker, cfg["whisper"]["language"])
+            )
+
+    # 3. Merge by timestamp into speaker turns
+    turns = merge_segments(all_segments, cfg["transcript"]["merge_gap_seconds"])
+    if not turns:
+        log.warning("No speech detected in any track — writing an empty transcript.")
+
+    # 4. Write transcript
+    participants = sorted(set(files.values()))
+    content = render_transcript(
+        turns,
+        call_name=call_name,
+        date=today,
+        participants=participants,
+        source_files=[p.name for p in files],
+        timestamps=cfg["transcript"]["timestamps"],
+    )
+    transcript_path = write_transcript(content, cfg["paths"]["output_dir"], call_slug)
+
+    # 5. Optional intelligence layer
+    summary_path = None
+    updated_profiles: list[Path] = []
+    if summarize_enabled and turns:
+        from .summarize import run_intelligence_layer
+        try:
+            summary_path, updated_profiles = run_intelligence_layer(
+                transcript_md=content,
+                call_name=call_name,
+                call_slug=call_slug,
+                date=today,
+                participants=participants,
+                cfg=cfg,
+            )
+        except Exception as e:  # never lose the transcript over an API failure
+            log.warning("Summary/profile step failed (%s). Transcript is safe at %s",
+                        e, transcript_path)
+    elif summarize_enabled and not turns:
+        log.info("Skipping summary/profiles: no speech to summarize.")
+
+    # 6. Run summary
+    print("\n=== Run summary ===")
+    print(f"Files processed : {len(files)}")
+    print(f"Speakers        : {', '.join(participants)}")
+    print(f"Turns           : {len(turns)}")
+    print(f"Transcript      : {transcript_path}")
+    if summary_path:
+        print(f"Summary         : {summary_path}")
+    if updated_profiles:
+        print(f"Profiles updated: {', '.join(str(p) for p in updated_profiles)}")
+    if not summarize_enabled:
+        print("Summary/profiles: skipped (disabled or no API key)")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+    return run(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
