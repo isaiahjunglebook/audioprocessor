@@ -1,0 +1,27 @@
+# Copy to config.yaml and edit. Everything here has a sensible default;
+# CLI flags override config values, which override defaults.
+
+owner_name: "Isaiah"        # you — no profile is built for the owner
+
+whisper:
+  model: large-v3           # tiny/base/small/medium/large-v3; large-v3 = best accuracy
+  compute_type: int8        # int8 on Apple Silicon CPU; float16 on NVIDIA GPU
+  language: en              # null to auto-detect
+  backend: faster-whisper   # transcription backend (swappable seam)
+
+transcript:
+  timestamps: true          # prefix each turn with [HH:MM:SS]
+  min_segment_duration: 0.4 # drop ultra-short segments (cross-track bleed filter)
+  merge_gap_seconds: 1.5    # collapse same-speaker segments within this gap into one turn
+
+summarize:
+  enabled: true             # requires ANTHROPIC_API_KEY; --no-summary disables per run
+  model: claude-sonnet-5    # or claude-opus-4-8 for higher quality
+  max_tokens: 4096
+
+speakers: {}                # optional overrides keyed by filename stem,
+                            # e.g. audio1234: "Isaiah"
+
+paths:
+  output_dir: ./output
+  profiles_dir: ./profiles

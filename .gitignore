@@ -1,0 +1,25 @@
+# Secrets
+.env
+
+# Environments
+.venv/
+venv/
+
+# Generated output
+output/
+profiles/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Audio files (don't commit recordings)
+*.m4a
+*.wav
+*.mp3
+*.flac
+*.aac
+
+# OS
+.DS_Store
