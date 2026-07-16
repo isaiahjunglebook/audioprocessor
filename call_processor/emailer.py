@@ -21,6 +21,19 @@ log = logging.getLogger(__name__)
 
 APP_PASSWORD_ENV = "GMAIL_APP_PASSWORD"
 
+# Summary sections that must never reach participants — facilitator-only.
+FACILITATOR_ONLY_SECTIONS = ("Facilitator signal",)
+
+
+def strip_facilitator_sections(md: str) -> str:
+    """Remove facilitator-only '## <heading>' sections (through the next '## ')."""
+    for heading in FACILITATOR_ONLY_SECTIONS:
+        md = re.sub(
+            rf"^## {re.escape(heading)}\s*\n.*?(?=^## |\Z)", "",
+            md, flags=re.MULTILINE | re.DOTALL,
+        )
+    return md
+
 
 def markdown_to_html(md: str) -> str:
     """Small converter for our known summary shape: ## headings, bullets, bold.

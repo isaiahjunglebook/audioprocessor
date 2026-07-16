@@ -255,9 +255,11 @@ def run(args: argparse.Namespace) -> int:
     # sit in output/<slug>/reflections/ for review until send_to_participants
     # is turned on in config.yaml.
     if email_enabled and reflections and cfg["email"].get("send_to_participants"):
-        from .emailer import send_summary_email as _send
+        from .emailer import send_summary_email as _send, strip_facilitator_sections
         contacts = config_mod.load_contacts(cfg.get("contacts_file"))
         summary_md = summary_path.read_text(encoding="utf-8") if summary_path else ""
+        # Facilitator-only sections never reach participants.
+        summary_md = strip_facilitator_sections(summary_md)
         for name, rpath in reflections.items():
             addr = config_mod.match_contact(name, contacts)
             if not addr:

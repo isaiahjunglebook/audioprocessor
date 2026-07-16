@@ -24,7 +24,10 @@ email:
   smtp_host: smtp.gmail.com
   smtp_port: 587
   from: "you@gmail.com"     # sender; app password goes in .env as GMAIL_APP_PASSWORD
-  to: []                    # recipients; empty list = send to yourself
+  to: []                    # recipients; empty list = send to yourself.
+                            # KEEP THIS AS YOURSELF ONLY: the summary email includes the
+                            # facilitator-only "Facilitator signal" section. Participants
+                            # get their own emails (send_to_participants) with it stripped.
   send_to_participants: false  # true = email each matched participant their reflection
                                # (leave false to review drafts in output/<call>/reflections/)
 
