@@ -46,7 +46,13 @@ def derive_speaker_name(stem: str) -> str | None:
     name = re.sub(r"[_-]+", " ", name).strip()
     if not name or not re.search(r"[A-Za-z]", name):
         return None
-    return " ".join(w if w.isupper() else w.capitalize() for w in name.split())
+    # Preserve genuine initials (short all-caps tokens like "JT"); title-case
+    # everything else, including full names Zoom happened to store in caps
+    # (a participant's display name being "ADAM" shouldn't shout in transcripts).
+    return " ".join(
+        w if (w.isupper() and len(w) <= 3) else w.capitalize()
+        for w in name.split()
+    )
 
 
 def _looks_combined(stem: str) -> bool:
