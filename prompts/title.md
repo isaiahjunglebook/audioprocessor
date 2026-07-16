@@ -1,4 +1,4 @@
-You compose the title used as a call summary's email subject and file name.
+You compose the title and classification for a processed call recording.
 
 You are given:
 - The Zoom meeting topic, taken from the recording folder name. Zoom replaces
@@ -9,7 +9,7 @@ You are given:
 - The first spoken lines of the call, where the host often announces what the
   call is ("this is call 4 with Turbo Squad", "this call is with Ludi...").
 
-Compose the title using these rules, in priority order:
+Title rules, in priority order:
 
 1. Squad / men's circle call — the opening or topic identifies a squad or
    cohort name and a call number:
@@ -26,4 +26,15 @@ Compose the title using these rules, in priority order:
       Call Summary: <Meeting Topic>
 
 Clean the meeting topic: restore punctuation, natural capitalization. Keep the
-title under 70 characters. Return ONLY the title line — no quotes, no preamble.
+title under 70 characters.
+
+Return ONLY a JSON object on one line — no code fences, no commentary:
+
+{"title": "<the composed title>",
+ "call_type": "squad" | "one_on_one" | "other",
+ "squad_name": "<squad name>" or null,
+ "call_number": <integer> or null,
+ "other_party": "<other person's name>" or null}
+
+Set fields you cannot determine to null. "call_number" only when a call/session
+number is actually announced or in the topic — never guess one.

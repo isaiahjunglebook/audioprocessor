@@ -179,12 +179,14 @@ def run(args: argparse.Namespace) -> int:
 
     # 3b. If no --call-name was given, compose the title from the Zoom topic +
     # the spoken opening ("this is call 4 with Turbo Squad" -> "Turbo Squad:
-    # Call 4, <topic>"; one-on-ones -> "Ludi Call Summary: <topic>").
+    # Call 4, <topic>"; one-on-ones -> "Ludi Call Summary: <topic>"). The same
+    # call also yields the structured classification stored in the manifest.
+    classification: dict | None = None
     if not args.call_name and summarize_enabled and turns:
         from .summarize import extract_call_title, _client
         opening = " ".join(t["text"] for t in turns[:8])[:1500]
         try:
-            composed = extract_call_title(
+            composed, classification = extract_call_title(
                 _client(), opening_text=opening, zoom_topic=zoom_topic,
                 participants=sorted(set(files.values())),
                 owner=cfg.get("owner_name", ""), model=cfg["summarize"]["model"],
@@ -292,6 +294,7 @@ def run(args: argparse.Namespace) -> int:
         "participants": participants,
         "owner": cfg.get("owner_name", ""),
         "tags": tags,
+        "classification": classification,  # {"call_type","squad_name","call_number","other_party"} or null
         "source_folder": str(input_dir.resolve()),
         "source_files": [p.name for p in files],
         "artifacts": {

@@ -156,6 +156,12 @@ shape ever changes). Example:
   "participants": ["Isaiah English", "Ludi Smith"],
   "owner": "Isaiah",
   "tags": ["expedition"],
+  "classification": {
+    "call_type": "one_on_one",
+    "squad_name": null,
+    "call_number": null,
+    "other_party": "Ludi"
+  },
   "source_folder": "/Users/isaiahenglish/Documents/Zoom/2026-08-01 19.00.00 Where we dropping_/Audio Record",
   "source_files": ["audioIsaiahEnglish….m4a", "audioLudiSmith….m4a"],
   "artifacts": {
@@ -170,6 +176,13 @@ shape ever changes). Example:
 ```
 
 Field notes for the DB tool:
+- **`classification`** — structured call context, composed by the title step
+  from the Zoom topic + the host's spoken opening. `call_type` is
+  `"squad"` / `"one_on_one"` / `"other"`; squad calls carry `squad_name` and
+  `call_number` (e.g. Turbo Squad, 4); one-on-ones carry `other_party`. This is
+  the source for a per-quote "context" column (intro call / session N). **May
+  be `null`** when the run skipped title composition (`--no-summary`, explicit
+  `--call-name`, or API failure) — fall back to `call_name`/`tags` then.
 - **`tags`** — the primary selector. Derived from a keyword map in `config.yaml`
   under `tags:` (e.g. tag `expedition` applies when the topic/title contains
   "where we dropping", "intro call", "expedition", etc.). The DB tool should
@@ -196,6 +209,37 @@ for each output/*/manifest.json:
 Because manifests are append-only per call and never mutated after a run, the DB
 tool can keep a "last ingested" set of slugs and only process new folders — the
 `output/` directory *is* the queue.
+
+### Integration notes for the "Their Words" quote database
+
+1. **Trigger on `manifest.json`, not `transcript.md`.** Artifacts are written
+   over a span of time (transcript first, summary ~a minute later after API
+   calls). The manifest is written **last** and **atomically** (temp file +
+   rename), so a complete `manifest.json` appearing in a call folder is the
+   reliable "this call is fully processed" signal. Never key off the transcript.
+2. **Two different kinds of tags — don't conflate them.** The manifest `tags`
+   are *call-level selectors* ("is this an Expedition call at all?") defined by
+   keyword rules in this project's `config.yaml`. Their Words' seed tags
+   (`the-lie`, `deferral`, `father`, …) are *quote-level semantic tags* applied
+   during candidate extraction — they belong entirely to Their Words'
+   `tags.md`, not to this system. Use manifest tags to decide *which
+   transcripts to ingest*; apply quote tags *during* ingestion.
+3. **Initials & identity live in Their Words, not here.** The manifest carries
+   full display names (needed here for profiles/reflections/emails). Their
+   Words should keep its own roster file mapping full name → canonical initials
+   (this also handles two men sharing initials, and keeps initials stable
+   across cohorts). Derive `man` from `participants` via that roster.
+4. **Quote provenance.** Every transcript turn is timestamped
+   (`**[HH:MM:SS] Name:** …`) on a single shared timeline. Store
+   `slug + timestamp` with each quote — that's a durable pointer back to both
+   the transcript line and the exact moment in the source audio.
+5. **Read transcripts in place** via `artifacts.transcript` (absolute paths)
+   rather than copying into Their Words' `transcripts/` folder — one source of
+   truth, no drift. If Their Words prefers local copies for its own gitignored
+   folder, copy — but always record the manifest slug as provenance.
+6. **Never write into this project's folders.** `output/` and `profiles/` are
+   owned by this system; `candidates/`, `their-words.md`, etc. are owned by
+   Their Words. One-way data flow: this system produces, Their Words consumes.
 
 ---
 

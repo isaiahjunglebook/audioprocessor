@@ -13,6 +13,7 @@ downstream tool select, for example, every call tagged "expedition" or "squad".
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 
@@ -33,9 +34,16 @@ def derive_tags(text_sources: list[str], tag_map: dict[str, list[str]]) -> list[
 
 
 def write_manifest(output_dir: Path, call_slug: str, *, data: dict) -> Path:
-    """Write output/<slug>/manifest.json and return its path."""
+    """Write output/<slug>/manifest.json atomically and return its path.
+
+    The manifest is the last artifact written for a call AND is written via
+    temp-file + rename, so downstream watchers can safely treat the appearance
+    of a complete manifest.json as the "this call is fully processed" signal.
+    """
     folder = Path(output_dir) / call_slug
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "manifest.json"
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp = folder / ".manifest.json.tmp"
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, path)  # atomic on the same filesystem
     return path

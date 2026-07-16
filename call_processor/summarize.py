@@ -92,12 +92,16 @@ def generate_summary(client, transcript_md: str, *, call_name: str, date: str,
 
 
 def extract_call_title(client, *, opening_text: str, zoom_topic: str | None,
-                       participants: list[str], owner: str, model: str) -> str | None:
-    """Compose the summary title from the Zoom topic + spoken opening.
-
-    Formats (see prompts/title.md): squad calls -> "Turbo Squad: Call 4, Act I";
-    one-on-ones -> "Ludi Call Summary: Where we dropping?".
+                       participants: list[str], owner: str, model: str
+                       ) -> tuple[str | None, dict | None]:
+    """Compose the title + structured classification from the Zoom topic and
+    spoken opening. Returns (title, classification) where classification is
+    {"call_type", "squad_name", "call_number", "other_party"} — the structured
+    fields downstream tools (e.g. the quote database) use for their "context"
+    column. Either element may be None on failure; callers must cope.
     """
+    import json
+
     system = _load_prompt("title")
     user_content = (
         f"Zoom meeting topic: {zoom_topic or '(unknown)'}\n"
@@ -105,12 +109,28 @@ def extract_call_title(client, *, opening_text: str, zoom_topic: str | None,
         f"Participants detected from audio tracks: {', '.join(participants) or '(unknown)'}\n\n"
         f"Opening lines of the call:\n{opening_text or '(no speech captured yet)'}"
     )
-    text = _complete(client, system=system, user_content=user_content,
-                     model=model, max_tokens=100)
-    text = text.strip().splitlines()[0].strip().strip('"') if text.strip() else ""
-    if not text or len(text) > 90:
-        return None
-    return text
+    raw = _complete(client, system=system, user_content=user_content,
+                    model=model, max_tokens=300).strip()
+    # Tolerant parse: take the outermost {...} regardless of fences/labels.
+    start, end = raw.find("{"), raw.rfind("}")
+    if start != -1 and end > start:
+        try:
+            data = json.loads(raw[start:end + 1])
+            title = str(data.get("title") or "").strip()
+            if title and len(title) <= 90:
+                return title, {
+                    "call_type": data.get("call_type"),
+                    "squad_name": data.get("squad_name"),
+                    "call_number": data.get("call_number"),
+                    "other_party": data.get("other_party"),
+                }
+        except (json.JSONDecodeError, TypeError):
+            pass
+    # Model returned a bare title line — accept it, without classification.
+    line = raw.splitlines()[0].strip().strip('"') if raw else ""
+    if line and len(line) <= 90 and "{" not in line and line.lower() != "json":
+        return line, None
+    return None, None
 
 
 def generate_reflection(client, *, name: str, transcript_md: str, profile_md: str,
