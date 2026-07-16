@@ -276,6 +276,35 @@ def run(args: argparse.Namespace) -> int:
         log.info("Reflections saved for review (draft mode): %s",
                  ", ".join(str(p) for p in reflections.values()))
 
+    # 6c. Write the machine-readable manifest — the integration contract for
+    # downstream tools (quote/marketing database, etc.).
+    from .manifest import derive_tags, write_manifest
+    tags = derive_tags([zoom_topic or "", call_name, folder_label], cfg.get("tags", {}))
+    out_root = Path(cfg["paths"]["output_dir"])
+    call_dir = out_root / call_slug
+    manifest = {
+        "schema_version": 1,
+        "call_name": call_name,
+        "zoom_topic": (zoom_topic or "").rstrip("_ ").strip() or None,
+        "date": call_date,
+        "time": rec_time,
+        "duration_seconds": round(max((t["end"] for t in turns), default=0), 1),
+        "participants": participants,
+        "owner": cfg.get("owner_name", ""),
+        "tags": tags,
+        "source_folder": str(input_dir.resolve()),
+        "source_files": [p.name for p in files],
+        "artifacts": {
+            "transcript": str(transcript_path.resolve()),
+            "summary": str(summary_path.resolve()) if summary_path else None,
+            "reflections": {n: str(p.resolve()) for n, p in reflections.items()},
+            "manifest": str((call_dir / "manifest.json").resolve()),
+        },
+        "profiles_updated": [str(p.resolve()) for p in updated_profiles],
+        "emailed_to": emailed_to,
+    }
+    manifest_path = write_manifest(out_root, call_slug, data=manifest)
+
     # 7. Run summary
     print("\n=== Run summary ===")
     print(f"Files processed : {len(files)}")
@@ -290,6 +319,7 @@ def run(args: argparse.Namespace) -> int:
         print(f"Reflections     : {', '.join(str(p) for p in reflections.values())}")
     if emailed_to:
         print(f"Emailed to      : {', '.join(emailed_to)}")
+    print(f"Manifest        : {manifest_path}" + (f"  (tags: {', '.join(tags)})" if tags else ""))
     if not summarize_enabled:
         print("Summary/profiles: skipped (disabled or no API key)")
     return 0

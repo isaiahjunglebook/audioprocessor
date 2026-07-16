@@ -42,6 +42,10 @@ DEFAULTS: dict = {
     },
     "contacts_file": "./contacts.yaml",
     "speakers": {},
+    # Keyword -> tag map for the manifest. Keys are tags; values are phrases that,
+    # if found in the Zoom topic or call title, apply that tag. Downstream tools
+    # (e.g. a quote database) filter calls by these tags.
+    "tags": {},
     "paths": {
         "output_dir": "./output",
         "profiles_dir": "./profiles",

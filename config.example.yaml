@@ -37,6 +37,14 @@ contacts_file: ./contacts.yaml  # participant name -> email (see contacts.exampl
 speakers: {}                # optional overrides keyed by filename stem,
                             # e.g. audio1234: "Isaiah"
 
+# Tags written into each call's manifest.json (the integration point for a
+# downstream quote/marketing database). A tag is applied when any of its
+# phrases appears in the Zoom topic or the composed call title.
+tags:
+  expedition: ["expedition", "where we dropping", "intro call", "onboarding"]
+  squad: ["squad"]
+  one-on-one: ["1:1", "one on one"]
+
 paths:
   output_dir: ./output
   profiles_dir: ./profiles
