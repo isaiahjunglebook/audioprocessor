@@ -56,15 +56,21 @@ python -m call_processor.main \
   [--language en] \
   [--no-summary] \
   [--map "audio1234=Isaiah,audio5678=Jane Cooper"] \
+  [--granularity turn|sentence] \
+  [--no-speaker-labels] \
   [--config ./config.yaml]
 ```
 
-- `--input` (required): folder of per-participant audio files.
+- `--input` (required): folder of per-participant audio files, or a single audio file.
 - `--call-name`: used for the output folder + headers. Defaults to the input
   folder name + today's date.
 - `--map`: inline speaker overrides (`filename_stem=Display Name`, comma-separated).
   The same overrides can live in `config.yaml` under `speakers:`.
 - `--no-summary`: transcript only; no API calls at all.
+- `--granularity`: `turn` (default) collapses consecutive same-speaker segments
+  into one line; `sentence` gives every sentence its own `[HH:MM:SS]`, cut on
+  Whisper's word timings.
+- `--no-speaker-labels`: lines read `**[00:01:05]** text` with no name.
 
 Outputs:
 
@@ -72,6 +78,33 @@ Outputs:
 - `output/<call-slug>/summary.md` — executive summary (if summarize enabled)
 - `profiles/<Speaker Name>.md` — evolving dossier per non-owner participant,
   updated in place each call (if summarize enabled)
+
+## One mixed recording: timestamps without speakers
+
+Sometimes you have a single already-mixed file (a voice memo, a download) and
+you already have a speaker-attributed transcript of it from somewhere else. You
+don't need this tool to guess speakers — you need a **timestamp on every
+sentence** so you can line the two up.
+
+```bash
+python -m call_processor.main --input ~/Downloads/conversation.m4a --timestamps-only
+```
+
+`--timestamps-only` is a preset: `--input` takes the file directly, every
+sentence gets its own line and timestamp, no speaker names are printed, the
+cross-track bleed filter is off (nothing can bleed when there's one source),
+and no API calls are made. You get:
+
+```markdown
+**[00:00:00]** So we met Dr. Cooper.
+
+**[00:00:04]** She said yes.
+```
+
+The run's `manifest.json` records `"speaker_attributed": false` and an empty
+`participants` list, so a downstream tool never mistakes a filename for a
+speaker. This mode does **not** do diarization — attribution still comes from
+separate tracks, or from the other transcript you're aligning against.
 
 ## Speaker names
 
@@ -123,6 +156,7 @@ call_processor/
   discover.py      # find files, skip combined/mixed, resolve speakers
   transcribe.py    # backend seam + faster-whisper impl (mlx-whisper can drop in)
   merge.py         # sort + collapse into speaker turns
+  sentences.py     # sort + split into per-sentence lines (granularity: sentence)
   render.py        # transcript markdown writer
   summarize.py     # Claude summary + compounding profile updates
 prompts/           # editable prompt text for summary + profiles

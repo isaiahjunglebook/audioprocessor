@@ -10,9 +10,13 @@ whisper:
   backend: faster-whisper   # transcription backend (swappable seam)
 
 transcript:
-  timestamps: true          # prefix each turn with [HH:MM:SS]
-  min_segment_duration: 0.4 # drop ultra-short segments (cross-track bleed filter)
+  timestamps: true          # prefix each line with [HH:MM:SS]
+  min_segment_duration: 0.4 # drop ultra-short segments (cross-track bleed filter;
+                            # auto-disabled when there's only one audio source)
   merge_gap_seconds: 1.5    # collapse same-speaker segments within this gap into one turn
+  granularity: turn         # turn = one line per speaker turn;
+                            # sentence = one timestamped line per sentence
+  speaker_labels: true      # false = "[00:01:05] text" with no speaker name
 
 summarize:
   enabled: true             # requires ANTHROPIC_API_KEY; --no-summary disables per run

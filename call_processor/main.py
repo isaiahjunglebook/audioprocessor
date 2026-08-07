@@ -53,7 +53,8 @@ def build_parser() -> argparse.ArgumentParser:
                     "speaker-labeled transcript (+ optional summary and profiles).",
     )
     p.add_argument("--input", default=None,
-                   help="Folder of per-participant audio files (e.g. Zoom's 'Audio Record')")
+                   help="Folder of per-participant audio files (e.g. Zoom's 'Audio Record'), "
+                        "or a path to a single audio file")
     p.add_argument("--latest", action="store_true",
                    help="Process the most recent recording under ~/Documents/Zoom "
                         "instead of passing --input")
@@ -67,6 +68,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Audio language code, or 'auto' to auto-detect")
     p.add_argument("--no-summary", action="store_true",
                    help="Transcript only; skip all Claude API calls")
+    p.add_argument("--timestamps-only", action="store_true",
+                   help="One timestamped line per sentence, no speaker names, no "
+                        "summary. For a single mixed recording you intend to align "
+                        "against a separately speaker-attributed transcript.")
+    p.add_argument("--granularity", choices=["turn", "sentence"], default=None,
+                   help="'turn' (default) collapses consecutive same-speaker "
+                        "segments; 'sentence' gives every sentence its own timestamp")
+    p.add_argument("--no-speaker-labels", action="store_true",
+                   help="Omit speaker names from the transcript lines")
     p.add_argument("--map", dest="speaker_map", default=None,
                    help='Speaker overrides: "filename_stem=Display Name,stem2=Name Two"')
     p.add_argument("--config", default=None, help="Path to config.yaml")
@@ -101,7 +111,20 @@ def run(args: argparse.Namespace) -> int:
         cfg["whisper"]["language"] = None if args.language == "auto" else args.language
     if args.no_summary:
         cfg["summarize"]["enabled"] = False
+    if args.granularity:
+        cfg["transcript"]["granularity"] = args.granularity
+    if args.no_speaker_labels:
+        cfg["transcript"]["speaker_labels"] = False
+    if args.timestamps_only:
+        # One purpose: a clean timestamped text track to align against another
+        # transcript. Sentence lines, no names, no bleed filter (nothing can
+        # bleed between tracks when there's one source), no API calls.
+        cfg["transcript"]["granularity"] = "sentence"
+        cfg["transcript"]["speaker_labels"] = False
+        cfg["transcript"]["min_segment_duration"] = 0.0
+        cfg["summarize"]["enabled"] = False
     overrides = {**cfg.get("speakers", {}), **config_mod.parse_speaker_map(args.speaker_map)}
+    speaker_labels = cfg["transcript"].get("speaker_labels", True)
 
     today = _dt.date.today().isoformat()
     if args.latest:
@@ -114,14 +137,23 @@ def run(args: argparse.Namespace) -> int:
     elif args.input:
         input_dir = Path(args.input).expanduser()
     else:
-        log.error("Pass --input <folder> or --latest.")
+        log.error("Pass --input <folder or audio file> or --latest.")
         return 1
-    # Zoom's audio lives in "<date time topic>/Audio Record" — pull the pieces apart.
-    folder_label = input_dir.parent.name if input_dir.name == "Audio Record" else input_dir.name
+    # --input may name a single file; the manifest still records a folder.
+    single_file = input_dir.is_file()
+    source_dir = input_dir.parent if single_file else input_dir
+    if single_file:
+        folder_label = input_dir.stem
+    else:
+        # Zoom's audio lives in "<date time topic>/Audio Record" — pull the pieces apart.
+        folder_label = input_dir.parent.name if input_dir.name == "Audio Record" else input_dir.name
     rec_date, rec_time, zoom_topic = parse_zoom_folder(folder_label)
     call_date = rec_date or today
     topic_clean = (zoom_topic or folder_label).rstrip("_ ").strip()
-    call_name = args.call_name or f"Call Summary: {topic_clean}"
+    # "Call Summary: X" is the title of a summarised call; a raw timestamped
+    # transcript is just named after its source.
+    default_name = topic_clean if args.timestamps_only else f"Call Summary: {topic_clean}"
+    call_name = args.call_name or default_name
     # Files stay date-prefixed so output/ sorts chronologically in Finder.
     call_slug = slugify(f"{call_date} {call_name}")
 
@@ -132,9 +164,18 @@ def run(args: argparse.Namespace) -> int:
         log.error("%s", e)
         return 1
 
-    print("Speaker mapping:")
-    for path, speaker in files.items():
-        print(f"  {path.name}  ->  {speaker}")
+    if speaker_labels:
+        print("Speaker mapping:")
+        for path, speaker in files.items():
+            print(f"  {path.name}  ->  {speaker}")
+    else:
+        print(f"Source: {', '.join(p.name for p in files)}  (no speaker labels)")
+
+    # The bleed filter exists to drop the other speaker leaking between tracks.
+    # With a single source there is no other track, so it only loses real words.
+    if len(files) == 1 and cfg["transcript"]["min_segment_duration"] > 0:
+        log.info("Single audio source — disabling the cross-track bleed filter.")
+        cfg["transcript"]["min_segment_duration"] = 0.0
 
     # Fail early (but keep going to the transcript) if summarize is on with no key
     summarize_enabled = cfg["summarize"]["enabled"]
@@ -172,8 +213,14 @@ def run(args: argparse.Namespace) -> int:
                 backend.transcribe_file(path, speaker, cfg["whisper"]["language"])
             )
 
-    # 3. Merge by timestamp into speaker turns
-    turns = merge_segments(all_segments, cfg["transcript"]["merge_gap_seconds"])
+    # 3. Reduce segments to output lines: either collapsed speaker turns, or
+    #    one line per sentence (each keeping its own timestamp).
+    sentence_mode = cfg["transcript"].get("granularity") == "sentence"
+    if sentence_mode:
+        from .sentences import split_into_sentences
+        turns = split_into_sentences(all_segments)
+    else:
+        turns = merge_segments(all_segments, cfg["transcript"]["merge_gap_seconds"])
     if not turns:
         log.warning("No speech detected in any track — writing an empty transcript.")
 
@@ -208,6 +255,7 @@ def run(args: argparse.Namespace) -> int:
         participants=participants,
         source_files=[p.name for p in files],
         timestamps=cfg["transcript"]["timestamps"],
+        speaker_labels=speaker_labels,
     )
     transcript_path = write_transcript(content, cfg["paths"]["output_dir"], call_slug)
 
@@ -293,11 +341,14 @@ def run(args: argparse.Namespace) -> int:
         "date": call_date,
         "time": rec_time,
         "duration_seconds": round(max((t["end"] for t in turns), default=0), 1),
-        "participants": participants,
+        # Without speaker labels the only "name" available is a filename, which
+        # is not a participant — downstream tools must not attribute quotes to it.
+        "speaker_attributed": speaker_labels,
+        "participants": participants if speaker_labels else [],
         "owner": cfg.get("owner_name", ""),
         "tags": tags,
         "classification": classification,  # {"call_type","squad_name","call_number","other_party"} or null
-        "source_folder": str(input_dir.resolve()),
+        "source_folder": str(source_dir.resolve()),
         "source_files": [p.name for p in files],
         "artifacts": {
             "transcript": str(transcript_path.resolve()),
@@ -313,8 +364,9 @@ def run(args: argparse.Namespace) -> int:
     # 7. Run summary
     print("\n=== Run summary ===")
     print(f"Files processed : {len(files)}")
-    print(f"Speakers        : {', '.join(participants)}")
-    print(f"Turns           : {len(turns)}")
+    if speaker_labels:
+        print(f"Speakers        : {', '.join(participants)}")
+    print(f"{'Sentences' if sentence_mode else 'Turns':<16}: {len(turns)}")
     print(f"Transcript      : {transcript_path}")
     if summary_path:
         print(f"Summary         : {summary_path}")

@@ -52,7 +52,17 @@ class FasterWhisperBackend:
             if (s.end - s.start) < self.min_segment_duration and len(text) < 12:
                 dropped += 1
                 continue
-            out.append({"start": s.start, "end": s.end, "speaker": speaker, "text": text})
+            segment = {"start": s.start, "end": s.end, "speaker": speaker, "text": text}
+            # Word timings ride along so sentence-granularity output can cut on
+            # real word boundaries instead of interpolating (see sentences.py).
+            words = [
+                {"start": w.start, "end": w.end, "word": w.word}
+                for w in (getattr(s, "words", None) or [])
+                if w.start is not None and w.end is not None
+            ]
+            if words:
+                segment["words"] = words
+            out.append(segment)
         if dropped:
             log.info("Dropped %d ultra-short segment(s) from %s (likely cross-track bleed)",
                      dropped, Path(path).name)

@@ -153,6 +153,7 @@ shape ever changes). Example:
   "date": "2026-08-01",
   "time": "19:00",
   "duration_seconds": 2832.0,
+  "speaker_attributed": true,
   "participants": ["Isaiah English", "Ludi Smith"],
   "owner": "Isaiah",
   "tags": ["expedition"],
@@ -193,6 +194,14 @@ Field notes for the DB tool:
   phrases from. All paths are absolute, so the DB tool can live anywhere.
 - **`participants`** — the cleaned display names (also the keys used in
   `profiles/` and `reflections/`).
+- **`speaker_attributed`** — `true` for the normal multitrack pipeline, where
+  every line is provably one speaker. `false` for a run made with
+  `--timestamps-only` / `--no-speaker-labels`: a single mixed recording turned
+  into a timestamped text track, with `participants` empty because no name can
+  be attached to any line. **The DB tool must not ingest quotes from a call
+  with `speaker_attributed: false`** — the transcript has no speaker to
+  attribute them to. Such runs exist to be aligned by timestamp against a
+  transcript that *is* attributed.
 - Paths use the owner's real home dir at run time; treat them as absolute.
 
 ### Recommended DB-tool ingestion pattern

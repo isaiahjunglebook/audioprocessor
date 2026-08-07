@@ -59,16 +59,45 @@ def _looks_combined(stem: str) -> bool:
     return bool(_COMBINED_HINT.search(stem))
 
 
+def _resolve_name(path: Path, overrides: dict[str, str]) -> str:
+    """Speaker name for one track: override, else derived, else the raw stem."""
+    if path.stem in overrides:
+        return overrides[path.stem]
+    derived = derive_speaker_name(path.stem)
+    if derived is None:
+        log.warning(
+            "Couldn't derive a clean speaker name from '%s'; using the raw "
+            "stem. Add an override: --map \"%s=Their Name\"", path.name, path.stem,
+        )
+        derived = path.stem
+    return derived
+
+
 def discover_files(input_dir: str | Path, overrides: dict[str, str] | None = None) -> dict[Path, str]:
     """Return {audio_path: speaker_name} for the usable per-participant tracks.
+
+    ``input_dir`` is normally a folder of per-participant tracks. A path to a
+    single audio file is also accepted — useful for a one-off mixed recording
+    where you only want timestamps (see ``--timestamps-only``). Naming a file
+    explicitly is unambiguous intent, so the combined-recording heuristics that
+    apply to folders are skipped for it.
 
     ``overrides`` maps filename stems to display names and always wins.
     Raises FileNotFoundError / ValueError with a clear message on bad input.
     """
     overrides = overrides or {}
     input_dir = Path(input_dir)
+
+    if input_dir.is_file():
+        if input_dir.suffix.lower() not in AUDIO_EXTS:
+            raise ValueError(
+                f"'{input_dir.name}' is not a recognised audio file "
+                f"({', '.join(sorted(AUDIO_EXTS))})."
+            )
+        return {input_dir: _resolve_name(input_dir, overrides)}
+
     if not input_dir.is_dir():
-        raise FileNotFoundError(f"Input folder not found: {input_dir}")
+        raise FileNotFoundError(f"Input path not found: {input_dir}")
 
     candidates = sorted(
         p for p in input_dir.iterdir()
@@ -118,17 +147,4 @@ def discover_files(input_dir: str | Path, overrides: dict[str, str] | None = Non
             "single-speaker transcript.", kept[0].name,
         )
 
-    mapping: dict[Path, str] = {}
-    for p in kept:
-        if p.stem in overrides:
-            mapping[p] = overrides[p.stem]
-            continue
-        derived = derive_speaker_name(p.stem)
-        if derived is None:
-            log.warning(
-                "Couldn't derive a clean speaker name from '%s'; using the raw "
-                "stem. Add an override: --map \"%s=Their Name\"", p.name, p.stem,
-            )
-            derived = p.stem
-        mapping[p] = derived
-    return mapping
+    return {p: _resolve_name(p, overrides) for p in kept}

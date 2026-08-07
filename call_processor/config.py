@@ -23,6 +23,9 @@ DEFAULTS: dict = {
         "timestamps": True,
         "min_segment_duration": 0.4,
         "merge_gap_seconds": 1.5,
+        "granularity": "turn",      # "turn" = collapse into speaker turns;
+                                    # "sentence" = one timestamped line per sentence
+        "speaker_labels": True,     # False = timestamp-only lines, no speaker names
     },
     "summarize": {
         "enabled": True,

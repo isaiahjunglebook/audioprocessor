@@ -21,13 +21,19 @@ def slugify(name: str) -> str:
 
 def render_transcript(turns: list[dict], *, call_name: str, date: str,
                       participants: list[str], source_files: list[str],
-                      timestamps: bool = True, time: str | None = None) -> str:
+                      timestamps: bool = True, time: str | None = None,
+                      speaker_labels: bool = True) -> str:
     duration = max((t["end"] for t in turns), default=0)
     lines = [
         f"# {call_name}",
         "",
         f"- **Date:** {date}" + (f" · {time}" if time else ""),
-        f"- **Participants:** {', '.join(participants)}",
+    ]
+    # A filename-derived "participant" is meaningless when labels are off (the
+    # source is one mixed recording), so the header drops the claim too.
+    if speaker_labels:
+        lines.append(f"- **Participants:** {', '.join(participants)}")
+    lines += [
         f"- **Duration:** {format_timestamp(duration)}",
         f"- **Source files:** {', '.join(source_files)}",
         "",
@@ -35,8 +41,13 @@ def render_transcript(turns: list[dict], *, call_name: str, date: str,
         "",
     ]
     for turn in turns:
-        prefix = f"[{format_timestamp(turn['start'])}] " if timestamps else ""
-        lines.append(f"**{prefix}{turn['speaker']}:** {turn['text']}")
+        # Head is the bold "[00:01:02] Jane:" prefix. With speaker labels off
+        # (one mixed source, or output destined to be aligned against a
+        # separately-attributed transcript) it's just the timestamp.
+        head = f"[{format_timestamp(turn['start'])}]" if timestamps else ""
+        if speaker_labels:
+            head = f"{head} {turn['speaker']}:".strip()
+        lines.append(f"**{head}** {turn['text']}" if head else turn["text"])
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
