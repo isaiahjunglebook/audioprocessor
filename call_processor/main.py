@@ -77,6 +77,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "segments; 'sentence' gives every sentence its own timestamp")
     p.add_argument("--no-speaker-labels", action="store_true",
                    help="Omit speaker names from the transcript lines")
+    p.add_argument("--out", default=None,
+                   help="Write the transcript to this exact file path instead of "
+                        "output/<slug>/transcript.md (parent folders are created)")
     p.add_argument("--map", dest="speaker_map", default=None,
                    help='Speaker overrides: "filename_stem=Display Name,stem2=Name Two"')
     p.add_argument("--config", default=None, help="Path to config.yaml")
@@ -257,7 +260,8 @@ def run(args: argparse.Namespace) -> int:
         timestamps=cfg["transcript"]["timestamps"],
         speaker_labels=speaker_labels,
     )
-    transcript_path = write_transcript(content, cfg["paths"]["output_dir"], call_slug)
+    transcript_path = write_transcript(content, cfg["paths"]["output_dir"],
+                                       call_slug, path=args.out)
 
     # 5. Optional intelligence layer
     summary_path = None

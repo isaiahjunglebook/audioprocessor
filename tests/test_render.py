@@ -1,8 +1,11 @@
 """Unit tests for transcript rendering, including label-free timestamp output."""
 
+import tempfile
 import unittest
+from pathlib import Path
 
-from call_processor.render import format_timestamp, render_transcript
+from call_processor.render import (format_timestamp, render_transcript,
+                                   write_transcript)
 
 
 def turn(start, end, speaker, text):
@@ -47,6 +50,25 @@ class TestRenderTranscript(unittest.TestCase):
         md = render_transcript(TURNS, timestamps=False, speaker_labels=False, **COMMON)
         self.assertIn("\nHey, thanks for hopping on.\n", md)
         self.assertNotIn("**[", md)
+
+
+class TestWriteTranscript(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def test_default_location(self):
+        p = write_transcript("hello\n", self.dir / "output", "2026-08-07-a-call")
+        self.assertEqual(p, self.dir / "output" / "2026-08-07-a-call" / "transcript.md")
+        self.assertEqual(p.read_text(), "hello\n")
+
+    def test_explicit_path_wins_and_creates_parents(self):
+        target = self.dir / "Timestamped Transcribed Memos" / "Memo 1.md"
+        p = write_transcript("hello\n", self.dir / "output", "slug", path=target)
+        self.assertEqual(p, target)
+        self.assertEqual(p.read_text(), "hello\n")
+        self.assertFalse((self.dir / "output" / "slug").exists())
 
 
 if __name__ == "__main__":

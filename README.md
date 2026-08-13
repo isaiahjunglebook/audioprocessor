@@ -71,6 +71,9 @@ python -m call_processor.main \
   into one line; `sentence` gives every sentence its own `[HH:MM:SS]`, cut on
   Whisper's word timings.
 - `--no-speaker-labels`: lines read `**[00:01:05]** text` with no name.
+- `--out`: write the transcript to an exact file path (parent folders created)
+  instead of `output/<slug>/transcript.md` — handy for batching into a folder
+  you organise yourself.
 
 Outputs:
 
@@ -100,6 +103,20 @@ and no API calls are made. You get:
 
 **[00:00:04]** She said yes.
 ```
+
+To batch a folder of recordings, one transcript each, named after its source:
+
+```bash
+find ~/Documents/recordings -type f -iname '*.m4a' -print0 |
+while IFS= read -r -d '' f; do
+  python -m call_processor.main --timestamps-only --input "$f" \
+    --out ~/Documents/transcripts/"$(basename "${f%.*}").md"
+done
+```
+
+Point `--input` at each **file**, not at the folder — a folder is read as the
+per-participant tracks of one call and would merge separate recordings into a
+single transcript.
 
 The run's `manifest.json` records `"speaker_attributed": false` and an empty
 `participants` list, so a downstream tool never mistakes a filename for a

@@ -52,9 +52,22 @@ def render_transcript(turns: list[dict], *, call_name: str, date: str,
     return "\n".join(lines).rstrip() + "\n"
 
 
-def write_transcript(content: str, output_dir: str | Path, call_slug: str) -> Path:
+def write_transcript(content: str, output_dir: str | Path, call_slug: str,
+                     *, path: str | Path | None = None) -> Path:
+    """Write the transcript and return where it landed.
+
+    Default location is ``<output_dir>/<call_slug>/transcript.md``. Pass
+    ``path`` to write to an exact file instead — for feeding a folder you
+    organise yourself, rather than the tool's per-call folders. Either way the
+    manifest records the absolute path, so downstream tools still find it.
+    """
+    if path is not None:
+        out_path = Path(path).expanduser()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(content, encoding="utf-8")
+        return out_path
     out_dir = Path(output_dir) / call_slug
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / "transcript.md"
-    path.write_text(content, encoding="utf-8")
-    return path
+    out_path = out_dir / "transcript.md"
+    out_path.write_text(content, encoding="utf-8")
+    return out_path
