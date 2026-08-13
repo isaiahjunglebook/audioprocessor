@@ -104,19 +104,25 @@ and no API calls are made. You get:
 **[00:00:04]** She said yes.
 ```
 
-To batch a folder of recordings, one transcript each, named after its source:
+To batch a whole folder of recordings, one transcript each:
 
 ```bash
-find ~/Documents/recordings -type f -iname '*.m4a' -print0 |
-while IFS= read -r -d '' f; do
-  python -m call_processor.main --timestamps-only --input "$f" \
-    --out ~/Documents/transcripts/"$(basename "${f%.*}").md"
-done
+bash scripts/transcribe_folder.sh <input folder> <output folder>
 ```
 
-Point `--input` at each **file**, not at the folder — a folder is read as the
-per-participant tracks of one call and would merge separate recordings into a
-single transcript.
+Recordings that already have a transcript are skipped, so an interrupted run —
+or a recording added later — resumes instead of redoing hours of work. A file
+that fails is reported at the end without stopping the batch, and re-running
+retries only the failures.
+
+Point `--input` at each **file**, not at a folder, if you call
+`call_processor.main` directly — a folder is read as the per-participant tracks
+of one call and would merge separate recordings into a single transcript. The
+batch script above handles this for you.
+
+Once a transcript exists, `prompts/attribute_speakers.md` is a reusable prompt
+for the second pass: hand it and the transcript to Claude to get speaker labels
+attached, with an explicit list of the lines it wasn't sure about.
 
 The run's `manifest.json` records `"speaker_attributed": false` and an empty
 `participants` list, so a downstream tool never mistakes a filename for a
