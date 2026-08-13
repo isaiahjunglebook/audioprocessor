@@ -21,7 +21,9 @@ PY="${PY:-$REPO/.venv/bin/python}"
 # screensaver. Re-exec under caffeinate once so the Mac stays awake for it.
 if [[ -z "${TRANSCRIBE_CAFFEINATED:-}" ]] && command -v caffeinate >/dev/null 2>&1; then
   export TRANSCRIBE_CAFFEINATED=1
-  exec caffeinate -i "$0" "$@"
+  # Re-exec through `bash` explicitly: caffeinate would otherwise have to
+  # execute this file directly, which fails when it lacks the execute bit.
+  exec caffeinate -i bash "$0" "$@"
 fi
 
 IN="${1:-}"
