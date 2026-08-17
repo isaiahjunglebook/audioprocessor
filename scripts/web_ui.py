@@ -18,11 +18,13 @@ from __future__ import annotations
 import argparse
 import json
 import queue
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -60,6 +62,39 @@ def _from_config(key: str, fallback: str) -> str:
 DEFAULT_OUT = str(Path.home() / "Documents" / "Transcripts")
 
 
+# Progress is read out of the transcriber's own output. WhisperX prints a
+# "[12.34 --> 56.78]" line per segment; call_processor prints "[progress] x/y".
+# Either one tells us how far into the audio we are.
+_SEG_RE = re.compile(r"\[(\d+(?:\.\d+)?)\s*-->\s*(\d+(?:\.\d+)?)\]")
+_PROGRESS_RE = re.compile(r"\[progress\]\s*([\d.]+)\s*/\s*([\d.]+)")
+_DIARIZE_RE = re.compile(r"diariz", re.IGNORECASE)
+
+
+def audio_duration(path: Path) -> float:
+    """Length of the recording in seconds, or 0 if ffprobe can't tell us.
+
+    Without this a percentage is impossible — the transcriber reports where it
+    is, not how far it has to go.
+    """
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+            capture_output=True, text=True, timeout=60)
+        return float(out.stdout.strip())
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 0.0
+
+
+def _humanize(seconds: float) -> str:
+    seconds = int(max(0, seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m {seconds % 60:02d}s"
+    return f"{seconds // 3600}h {(seconds % 3600) // 60:02d}m"
+
+
 def _add_job(name: str, path: Path, out_dir: str, engine: str, names: str) -> int:
     global _next_id
     with _lock:
@@ -70,6 +105,7 @@ def _add_job(name: str, path: Path, out_dir: str, engine: str, names: str) -> in
             "engine": engine, "names": names, "status": "queued",
             "detail": "waiting for the machine to be free",
             "queued_at": datetime.now().strftime("%H:%M:%S"), "result": None,
+            "percent": 0, "phase": "", "eta": "", "elapsed": "",
         }
     JOB_QUEUE.put(job_id)
     return job_id
@@ -80,6 +116,40 @@ def _set(job_id: int, **fields) -> None:
         JOBS[job_id].update(fields)
 
 
+def _read_progress(job_id: int, line: str, total: float, started: float) -> None:
+    """Update a job's percentage from one line of transcriber output."""
+    # Diarization runs after transcription and reports nothing useful, so the
+    # bar holds at 100% of *transcription* and the label says what's happening.
+    if _DIARIZE_RE.search(line):
+        _set(job_id, phase="finding speakers", percent=100, eta="almost there",
+             elapsed=_humanize(time.monotonic() - started),
+             detail="separating the voices — the last step, a few minutes")
+        return
+
+    position = 0.0
+    known_total = total
+    m = _PROGRESS_RE.search(line)
+    if m:
+        position, known_total = float(m.group(1)), float(m.group(2)) or total
+    else:
+        m = _SEG_RE.search(line)
+        if m:
+            position = float(m.group(2))
+    if position <= 0 or known_total <= 0:
+        return
+
+    fraction = min(1.0, position / known_total)
+    elapsed = time.monotonic() - started
+    # Cap at 99: the job isn't done until the file is actually on disk.
+    percent = min(99, int(fraction * 100))
+    eta = ""
+    if fraction > 0.02 and elapsed > 5:
+        eta = f"about {_humanize(elapsed / fraction - elapsed)} left"
+    _set(job_id, percent=percent, phase="transcribing", eta=eta,
+         elapsed=_humanize(elapsed),
+         detail=f"{_humanize(position)} of {_humanize(known_total)} transcribed")
+
+
 def _worker() -> None:
     """Run one job at a time. Transcription is CPU-bound; running several at
     once makes every one of them slower, so the queue is deliberately serial."""
@@ -88,8 +158,11 @@ def _worker() -> None:
         job = JOBS[job_id]
         staging = Path(job["path"]).parent
         try:
-            _set(job_id, status="running", detail="transcribing — this takes about "
-                                                 "as long as the recording")
+            total = audio_duration(Path(job["path"]))
+            _set(job_id, status="running", phase="transcribing", percent=0,
+                 detail=("transcribing — this takes about as long as the recording"
+                         if not total else
+                         f"transcribing {_humanize(total)} of audio"))
             if job["engine"] == "whisperx":
                 cmd = ["bash", str(REPO / "scripts" / "transcribe_folder_whisperx.sh"),
                        str(staging), job["out_dir"]]
@@ -99,16 +172,24 @@ def _worker() -> None:
                 cmd = ["bash", str(REPO / "scripts" / "transcribe_folder.sh"),
                        str(staging), job["out_dir"]]
 
-            proc = subprocess.run(cmd, cwd=str(REPO), capture_output=True, text=True)
+            started = time.monotonic()
+            tail: list[str] = []
+            proc = subprocess.Popen(cmd, cwd=str(REPO), stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True, bufsize=1)
+            for line in proc.stdout:
+                tail = (tail + [line.rstrip()])[-40:]
+                _read_progress(job_id, line, total, started)
+            proc.wait()
+
             stem = Path(job["name"]).stem
             produced = Path(job["out_dir"]) / f"{stem}.md"
 
             if proc.returncode == 0 and produced.is_file():
-                _set(job_id, status="done", detail=f"saved to {produced}",
-                     result=str(produced))
+                _set(job_id, status="done", percent=100, phase="", eta="",
+                     elapsed=_humanize(time.monotonic() - started),
+                     detail=f"saved to {produced}", result=str(produced))
             else:
-                tail = (proc.stderr or proc.stdout or "").strip().splitlines()
-                _set(job_id, status="failed",
+                _set(job_id, status="failed", percent=0, phase="", eta="",
                      detail="\n".join(tail[-6:]) or "the transcriber exited with an error")
         except Exception as e:  # a crashed job must not take the server down
             _set(job_id, status="failed", detail=str(e))
@@ -146,6 +227,12 @@ PAGE = """<!doctype html>
                  white-space:pre-wrap; word-break:break-word; }
   .pill { float:right; font-size:11px; padding:3px 9px; border-radius:99px;
           background:var(--line); text-transform:uppercase; letter-spacing:.04em; }
+  .bar { height:7px; border-radius:99px; background:var(--line); margin-top:10px;
+         overflow:hidden; }
+  .bar i { display:block; height:100%; background:var(--accent); border-radius:99px;
+           transition:width .4s ease; }
+  .meta { display:flex; justify-content:space-between; color:var(--muted);
+          font-size:12px; margin-top:6px; font-variant-numeric:tabular-nums; }
   .queued .pill{background:#8e8e93;color:#fff}.running .pill{background:#0071e3;color:#fff}
   .done .pill{background:#34c759;color:#fff}.failed .pill{background:#ff3b30;color:#fff}
   h2 { font-size:14px; text-transform:uppercase; letter-spacing:.06em;
@@ -199,10 +286,16 @@ async function send(files){
 async function refresh(){
   try{
     const jobs=await (await fetch('/jobs')).json();
-    document.getElementById('jobs').innerHTML = jobs.length ? jobs.map(j=>
-      `<div class="job ${j.status}"><span class="pill">${j.status}</span>`+
-      `<b>${esc(j.name)}</b><div class="detail">${esc(j.detail)}</div></div>`).join('')
-      : '<div class="job"><div class="detail">Nothing yet.</div></div>';
+    document.getElementById('jobs').innerHTML = jobs.length ? jobs.map(j=>{
+      const active = j.status==='running';
+      const bar = active
+        ? `<div class="bar"><i style="width:${j.percent||0}%"></i></div>`+
+          `<div class="meta"><span>${esc(j.phase)} &middot; ${j.percent||0}%</span>`+
+          `<span>${esc(j.eta||'')}</span></div>`
+        : '';
+      return `<div class="job ${j.status}"><span class="pill">${j.status}</span>`+
+             `<b>${esc(j.name)}</b><div class="detail">${esc(j.detail)}</div>${bar}</div>`;
+    }).join('') : '<div class="job"><div class="detail">Nothing yet.</div></div>';
   }catch(e){}
 }
 function esc(s){const d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML}

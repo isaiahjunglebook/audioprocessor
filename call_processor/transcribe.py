@@ -12,6 +12,7 @@ Segments are dicts: {"start": float, "end": float, "speaker": str, "text": str}.
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ class FasterWhisperBackend:
 
     def transcribe_file(self, path: str | Path, speaker: str,
                         language: str | None = "en") -> list[dict]:
-        segments, _info = self.model.transcribe(
+        segments, info = self.model.transcribe(
             str(path),
             language=language,          # None = auto-detect
             vad_filter=True,            # drops silence + faint cross-track bleed
@@ -43,7 +44,17 @@ class FasterWhisperBackend:
         )
         out: list[dict] = []
         dropped = 0
+        # Machine-readable progress for anything capturing our output (the web
+        # page). Suppressed on a terminal, where the rich progress bar already
+        # shows this and these lines would scribble over it.
+        total = float(getattr(info, "duration", 0.0) or 0.0)
+        report_progress = total > 0 and not sys.stdout.isatty()
+        last_reported = 0.0
+
         for s in segments:             # generator — segments stream, audio isn't held in memory
+            if report_progress and s.end - last_reported >= 15:
+                print(f"[progress] {s.end:.1f}/{total:.1f}", file=sys.stderr, flush=True)
+                last_reported = s.end
             text = s.text.strip()
             if not text:
                 continue

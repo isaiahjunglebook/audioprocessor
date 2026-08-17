@@ -271,3 +271,16 @@ editing `config.yaml` later needs no reinstall:
 bash scripts/install_shortcut.sh memos
 SCRIPT=transcribe_folder_whisperx.sh bash scripts/install_shortcut.sh memos
 ```
+
+### Progress
+
+The page shows a live percentage while a job runs. There's no progress API to
+ask — the percentage is read out of the transcriber's own output (WhisperX
+prints a `[12.3 --> 45.6]` line per segment; `call_processor` prints
+`[progress] position/total`) and measured against the recording's duration from
+`ffprobe`. Diarization runs after transcription and reports nothing useful, so
+the bar holds while the label switches to "finding speakers".
+
+`call_processor` only emits those progress lines when its output is being
+captured — on a terminal the rich progress bar already shows this, and the
+extra lines would scribble over it.
