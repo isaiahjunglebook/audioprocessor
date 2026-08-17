@@ -185,3 +185,18 @@ call_processor/
 prompts/           # editable prompt text for summary + profiles
 tests/             # pure-python unit tests
 ```
+
+## One-word shortcut
+
+Tired of remembering the paths? Install a single command that transcribes a
+folder of recordings from anywhere:
+
+```bash
+bash scripts/install_shortcut.sh memos \
+  ~/Documents/'CASTLE BLINDS'/'Raw Voice Memos' \
+  ~/Documents/'CASTLE BLINDS'/'Timestamped Transcribed Memos'
+```
+
+Open a new Terminal window and type `memos`. Re-running the installer updates
+the shortcut instead of adding a second copy; remove it with
+`bash scripts/install_shortcut.sh memos --uninstall`.
