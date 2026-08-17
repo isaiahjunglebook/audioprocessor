@@ -200,3 +200,41 @@ bash scripts/install_shortcut.sh memos \
 Open a new Terminal window and type `memos`. Re-running the installer updates
 the shortcut instead of adding a second copy; remove it with
 `bash scripts/install_shortcut.sh memos --uninstall`.
+
+## Speaker names from a single mixed recording (WhisperX)
+
+`--timestamps-only` gives timestamps but no speakers. To get both from one
+mixed recording, install [WhisperX](https://github.com/m-bain/whisperX) in its
+own virtualenv (keeping its dependencies away from this repo's), accept the
+pyannote model conditions on HuggingFace, then:
+
+```bash
+bash scripts/transcribe_folder_whisperx.sh <input folder> <output folder> "Dad,Isaiah"
+```
+
+Same resume-and-retry behaviour as `transcribe_folder.sh`. WhisperX separates
+voices but can't know whose they are, so it emits `SPEAKER_00`/`SPEAKER_01`;
+`call_processor/whisperx_md.py` converts its JSON into this repo's transcript
+format and puts the supplied names on those labels **in order of total speaking
+time**. That's a heuristic — the transcript header says so, so a wrong guess is
+visible rather than silent. Fix one without re-transcribing:
+
+```bash
+python -m call_processor.whisperx_md "<output>/whisperx-json/<name>.json" \
+  --map "SPEAKER_00=Isaiah,SPEAKER_01=Dad" --out "<output>/<name>.md"
+```
+
+The raw JSON is kept for exactly this reason.
+
+## Drag-and-drop page
+
+```bash
+python scripts/web_ui.py
+```
+
+Opens `http://127.0.0.1:8756` — drop in a recording, type where the transcript
+should be saved, and it runs the batch scripts above. Jobs run one at a time
+(transcription is CPU-bound; running several at once just makes them all
+slower). It binds to 127.0.0.1 only, because the server starts processes and
+must not be reachable from the network. Nothing is uploaded anywhere — the
+audio goes from your browser to a server on the same machine.
