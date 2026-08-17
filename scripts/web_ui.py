@@ -246,8 +246,13 @@ def _worker() -> None:
 
             started = time.monotonic()
             tail: list[str] = []
+            # Python block-buffers stdout when it isn't a terminal, so the
+            # transcriber's progress lines would sit in a buffer for minutes
+            # and the bar would look frozen. Unbuffered, they arrive as printed.
+            env = {**os.environ, "PYTHONUNBUFFERED": "1"}
             proc = subprocess.Popen(cmd, cwd=str(REPO), stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT, text=True, bufsize=1)
+                                    stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                    env=env)
             for line in proc.stdout:
                 tail = (tail + [line.rstrip()])[-40:]
                 _read_progress(job_id, line, total, started)
