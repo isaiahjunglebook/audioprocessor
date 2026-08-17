@@ -83,6 +83,36 @@ def _reexec_in_venv() -> None:
              [str(venv_python), str(Path(__file__).resolve()), *sys.argv[1:]])
 
 
+def choose_folder_dialog(start: str = "") -> str | None:
+    """Open the real macOS folder chooser and return the path picked.
+
+    A browser can't hand a server a filesystem path — the File System Access
+    API gives out opaque handles, not paths — but this server is on the same
+    machine, so it can raise the native dialog itself. Returns None when the
+    user cancels or the dialog isn't available (non-macOS, no osascript).
+    """
+    if not shutil.which("osascript"):
+        return None
+    default = ""
+    if start:
+        candidate = Path(start).expanduser()
+        if candidate.is_dir():
+            # AppleScript string literal: backslashes and quotes need escaping.
+            escaped = str(candidate).replace("\\", "\\\\").replace('"', '\\"')
+            default = f' default location POSIX file "{escaped}"'
+    script = ('tell application "System Events" to activate\n'
+              'POSIX path of (choose folder with prompt '
+              f'"Where should transcripts be saved?"{default})')
+    try:
+        result = subprocess.run(["osascript", "-e", script],
+                                capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None          # cancelled, or the dialog failed
+    return result.stdout.strip() or None
+
+
 def _project_list() -> dict:
     """Projects from config.yaml, resolved for the picker. Empty if none."""
     try:
@@ -262,6 +292,13 @@ PAGE = """<!doctype html>
   input, select { width:100%; padding:10px 12px; border:1px solid var(--line);
                   border-radius:9px; background:var(--card); color:var(--fg); font-size:14px; }
   .hint { color:var(--muted); font-size:12px; margin-top:5px; }
+  .row { display:flex; gap:8px; align-items:stretch; }
+  .row input { flex:1; min-width:0; }
+  button { padding:10px 16px; border:1px solid var(--line); border-radius:9px;
+           background:var(--card); color:var(--fg); font-size:14px; cursor:pointer;
+           white-space:nowrap; font-family:inherit; }
+  button:hover { border-color:var(--accent); color:var(--accent); }
+  button:disabled { opacity:.5; cursor:default; }
   .job { background:var(--card); border:1px solid var(--line); border-radius:11px;
          padding:14px 16px; margin-top:10px; }
   .job b { font-size:14px; }
@@ -296,7 +333,10 @@ PAGE = """<!doctype html>
 </div>
 
 <label for="out">Save transcripts to</label>
-<input id="out" value="__DEFAULT_OUT__" spellcheck="false">
+<div class="row">
+  <input id="out" value="__DEFAULT_OUT__" spellcheck="false">
+  <button id="browse" type="button" hidden>Choose…</button>
+</div>
 <div class="hint">Full path to a folder on this Mac. It'll be created if missing.</div>
 
 <label for="engine">Transcript type</label>
@@ -367,6 +407,26 @@ async function loadProjects(){
     };
   }catch(e){}
 }
+// Native folder chooser, opened by the server — a browser can only hand back
+// an opaque handle, but the server is on this machine and can ask macOS.
+const browse=document.getElementById('browse');
+(async()=>{
+  try{
+    if(!(await (await fetch('/can-browse')).json()).ok) return;
+    browse.hidden=false;
+    browse.onclick=async()=>{
+      browse.disabled=true; browse.textContent='Choose…';
+      try{
+        const out=document.getElementById('out');
+        const r=await fetch('/choose-folder?current='+encodeURIComponent(out.value),{method:'POST'});
+        const {path}=await r.json();
+        if(path) out.value=path;          // empty means cancelled: keep what's there
+      }catch(e){}
+      browse.disabled=false;
+    };
+  }catch(e){}
+})();
+
 loadProjects(); refresh(); setInterval(refresh, 2000);
 </script></body></html>"""
 
@@ -388,6 +448,9 @@ class Handler(BaseHTTPRequestHandler):
             page = (PAGE.replace("__DEFAULT_OUT__", self.server.default_out)
                         .replace("__DEFAULT_NAMES__", self.server.default_names))
             self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
+        elif route == "/can-browse":
+            self._send(200, json.dumps({"ok": bool(shutil.which("osascript"))}).encode(),
+                       "application/json")
         elif route == "/projects":
             self._send(200, json.dumps(_project_list()).encode(), "application/json")
         elif route == "/jobs":
@@ -399,6 +462,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parts = urlparse(self.path)
+        if parts.path == "/choose-folder":
+            current = (parse_qs(parts.query).get("current") or [""])[0]
+            chosen = choose_folder_dialog(current)
+            return self._send(200, json.dumps({"path": chosen or ""}).encode(),
+                              "application/json")
         if parts.path != "/upload":
             return self._send(404, b"not found", "text/plain")
 

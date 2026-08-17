@@ -232,8 +232,10 @@ The raw JSON is kept for exactly this reason.
 python scripts/web_ui.py
 ```
 
-Opens `http://127.0.0.1:8756` — drop in a recording, type where the transcript
-should be saved, and it runs the batch scripts above. Jobs run one at a time
+Opens `http://127.0.0.1:8756` — drop in a recording, pick where the transcript
+should be saved (**Choose…** opens the real macOS folder dialog; a browser can
+only return an opaque handle, but this server is on the same machine and can
+raise the native chooser itself), and it runs the batch scripts above. Jobs run one at a time
 (transcription is CPU-bound; running several at once just makes them all
 slower). It binds to 127.0.0.1 only, because the server starts processes and
 must not be reachable from the network. Nothing is uploaded anywhere — the
