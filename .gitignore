@@ -29,3 +29,6 @@ logs/
 
 # Private contact list
 contacts.yaml
+
+# Local config — holds your email address and recipient list
+config.yaml
