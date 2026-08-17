@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import queue
 import re
 import shutil
@@ -57,6 +58,29 @@ def _defaults() -> tuple[str, str]:
                 format_value(settings["speaker_names"]))
     except Exception:
         return DEFAULT_OUT, ""
+
+
+def _reexec_in_venv() -> None:
+    """Restart under the repo's virtualenv if this Python can't read config.
+
+    Launching with the system `python3` is the natural thing to type, but
+    PyYAML lives in the repo virtualenv — so config.yaml would silently fail
+    to load and the page would come up with no projects and no defaults,
+    looking like a config mistake rather than a wrong interpreter.
+    """
+    try:
+        import yaml  # noqa: F401
+        return       # this interpreter is fine
+    except ImportError:
+        pass
+    venv_python = REPO / ".venv" / "bin" / "python"
+    if not (venv_python.is_file() and os.access(venv_python, os.X_OK)):
+        return       # nothing better available; carry on with defaults
+    if Path(sys.executable).resolve() == venv_python.resolve():
+        return       # already there — never loop
+    print(f"  (restarting under {venv_python} so config.yaml can be read)")
+    os.execv(str(venv_python),
+             [str(venv_python), str(Path(__file__).resolve()), *sys.argv[1:]])
 
 
 def _project_list() -> dict:
@@ -435,6 +459,7 @@ def main(argv: list[str] | None = None) -> int:
                         "(default: whisperx.speaker_names from config.yaml)")
     p.add_argument("--no-browser", action="store_true", help="Don't open a browser window")
     args = p.parse_args(argv)
+    _reexec_in_venv()   # before any state exists, so restarting costs nothing
 
     threading.Thread(target=_worker, daemon=True).start()
 
