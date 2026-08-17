@@ -43,20 +43,38 @@ _lock = threading.Lock()
 _next_id = 1
 
 
-def _from_config(key: str, fallback: str) -> str:
-    """Read a setting from config.yaml, falling back if it isn't configured.
+def _defaults() -> tuple[str, str]:
+    """(output folder, speaker names) for the default project, if configured.
 
     Imported lazily and failure-tolerantly: the page must still start for
-    someone who has no config.yaml (or no PyYAML) yet.
+    someone with no config.yaml (or no PyYAML) yet.
     """
     try:
-        from call_processor.paths import format_value, lookup
-        from call_processor import config as config_mod
-        value = format_value(lookup(config_mod.load_config(None), key),
-                             is_path=key.endswith(("_dir", "venv")))
-        return value or fallback
+        from call_processor import config as config_mod, projects as projects_mod
+        from call_processor.paths import format_value
+        settings = projects_mod.resolve(config_mod.load_config(None))
+        return (format_value(settings["transcripts_dir"], is_path=True) or DEFAULT_OUT,
+                format_value(settings["speaker_names"]))
     except Exception:
-        return fallback
+        return DEFAULT_OUT, ""
+
+
+def _project_list() -> dict:
+    """Projects from config.yaml, resolved for the picker. Empty if none."""
+    try:
+        from call_processor import config as config_mod, projects as projects_mod
+        from call_processor.paths import format_value
+        cfg = config_mod.load_config(None)
+        out = {}
+        for name in projects_mod.list_projects(cfg):
+            settings = projects_mod.resolve(cfg, name)
+            out[name] = {
+                "transcripts_dir": format_value(settings["transcripts_dir"], is_path=True),
+                "speaker_names": format_value(settings["speaker_names"]),
+            }
+        return {"projects": out, "current": projects_mod.default_project(cfg) or ""}
+    except Exception:
+        return {"projects": {}, "current": ""}
 
 
 DEFAULT_OUT = str(Path.home() / "Documents" / "Transcripts")
@@ -247,6 +265,12 @@ PAGE = """<!doctype html>
   <input type="file" id="file" accept="audio/*" hidden multiple>
 </div>
 
+<div id="projectRow" hidden>
+  <label for="project">Project</label>
+  <select id="project"></select>
+  <div class="hint">Switches the folder and speakers below. Edit either afterwards.</div>
+</div>
+
 <label for="out">Save transcripts to</label>
 <input id="out" value="__DEFAULT_OUT__" spellcheck="false">
 <div class="hint">Full path to a folder on this Mac. It'll be created if missing.</div>
@@ -299,7 +323,27 @@ async function refresh(){
   }catch(e){}
 }
 function esc(s){const d=document.createElement('div');d.textContent=s==null?'':s;return d.innerHTML}
-refresh(); setInterval(refresh, 2000);
+
+// Projects are optional: with none configured the picker stays hidden and the
+// page behaves exactly as it did before.
+let PROJECTS={};
+async function loadProjects(){
+  try{
+    const data=await (await fetch('/projects')).json();
+    PROJECTS=data.projects||{};
+    const names=Object.keys(PROJECTS);
+    if(!names.length) return;
+    const sel=document.getElementById('project');
+    sel.innerHTML=names.map(n=>`<option value="${esc(n)}"${n===data.current?' selected':''}>${esc(n)}</option>`).join('');
+    document.getElementById('projectRow').hidden=false;
+    sel.onchange=()=>{
+      const p=PROJECTS[sel.value]||{};
+      if(p.transcripts_dir) document.getElementById('out').value=p.transcripts_dir;
+      document.getElementById('names').value=p.speaker_names||'';
+    };
+  }catch(e){}
+}
+loadProjects(); refresh(); setInterval(refresh, 2000);
 </script></body></html>"""
 
 
@@ -320,6 +364,8 @@ class Handler(BaseHTTPRequestHandler):
             page = (PAGE.replace("__DEFAULT_OUT__", self.server.default_out)
                         .replace("__DEFAULT_NAMES__", self.server.default_names))
             self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
+        elif route == "/projects":
+            self._send(200, json.dumps(_project_list()).encode(), "application/json")
         elif route == "/jobs":
             with _lock:
                 jobs = sorted(JOBS.values(), key=lambda j: -j["id"])[:20]
@@ -395,8 +441,9 @@ def main(argv: list[str] | None = None) -> int:
     # 127.0.0.1, never 0.0.0.0: this server starts processes, so it must not be
     # reachable from anything but this machine.
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    server.default_out = args.out or _from_config("paths.transcripts_dir", DEFAULT_OUT)
-    server.default_names = args.names or _from_config("whisperx.speaker_names", "")
+    config_out, config_names = _defaults()
+    server.default_out = args.out or config_out
+    server.default_names = args.names or config_names
     url = f"http://127.0.0.1:{args.port}"
     print(f"\n  Transcriber running at {url}")
     print("  Leave this window open. Press Control-C to stop.\n")

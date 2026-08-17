@@ -62,6 +62,21 @@ paths:
   recordings_dir: ""    # e.g. ~/Documents/CASTLE BLINDS/Raw Voice Memos
   transcripts_dir: ""   # e.g. ~/Documents/CASTLE BLINDS/Timestamped Transcribed Memos
 
+# Several bodies of work, one tool. Each project has its own folders and cast;
+# anything a project leaves out falls back to paths:/whisperx: above.
+# Pick one per run with -p:  bash scripts/transcribe_folder.sh -p interviews
+default_project: castle
+projects:
+  castle:
+    recordings_dir:  ~/Documents/CASTLE BLINDS/Raw Voice Memos
+    transcripts_dir: ~/Documents/CASTLE BLINDS/Timestamped Transcribed Memos
+    speaker_names:   ["Dad", "Isaiah"]
+  interviews:
+    recordings_dir:  ~/Documents/Interviews/raw
+    transcripts_dir: ~/Documents/Interviews/transcripts
+    speaker_names:   ["Isaiah", "Guest"]
+    num_speakers:    2
+
 # The WhisperX path: one mixed recording -> speaker-labeled transcript.
 # Used by scripts/transcribe_folder_whisperx.sh and the web page.
 whisperx:

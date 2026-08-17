@@ -29,12 +29,31 @@ CONVERT_PY="${CONVERT_PY:-$REPO/.venv/bin/python}"
 
 cfg() { "$CONVERT_PY" -m call_processor.paths "$1" 2>/dev/null || true; }
 
+# -p/--project selects a named block in config.yaml; PROJECT= does the same.
+if [[ "${1:-}" == "-p" || "${1:-}" == "--project" ]]; then
+  PROJECT="${2:-}"; shift 2
+fi
+PROJECT="${PROJECT:-}"
+proj() {
+  "$CONVERT_PY" -m call_processor.projects --get "$1" \
+    ${PROJECT:+--project "$PROJECT"} 2>/dev/null || true
+}
+# A named project that doesn't exist is a typo, not a reason to silently
+# transcribe into the wrong folder.
+if [[ -n "$PROJECT" ]]; then
+  if ! "$CONVERT_PY" -m call_processor.projects --get transcripts_dir --project "$PROJECT" >/dev/null 2>&1; then
+    echo "ERROR: no project named '$PROJECT' in config.yaml." >&2
+    echo "Available: $("$CONVERT_PY" -m call_processor.projects --list 2>/dev/null | tr '\n' ' ')" >&2
+    exit 1
+  fi
+fi
+
 # Environment beats config.yaml, which beats the built-in default.
-WHISPERX_VENV="${WHISPERX_VENV:-$(cfg whisperx.venv)}"
+WHISPERX_VENV="${WHISPERX_VENV:-$(proj venv)}"
 WHISPERX_VENV="${WHISPERX_VENV:-$HOME/Documents/whisperx-tool/.venv}"
-SPEAKERS="${SPEAKERS:-$(cfg whisperx.num_speakers)}"
+SPEAKERS="${SPEAKERS:-$(proj num_speakers)}"
 SPEAKERS="${SPEAKERS:-2}"
-WHISPER_MODEL="${WHISPER_MODEL:-$(cfg whisperx.model)}"
+WHISPER_MODEL="${WHISPER_MODEL:-$(proj model)}"
 WHISPER_MODEL="${WHISPER_MODEL:-large-v3}"
 
 WHISPERX="$WHISPERX_VENV/bin/whisperx"
@@ -45,12 +64,12 @@ if [[ -z "${TRANSCRIBE_CAFFEINATED:-}" ]] && command -v caffeinate >/dev/null 2>
   exec caffeinate -i bash "$0" "$@"
 fi
 
-IN="${1:-$(cfg paths.recordings_dir)}"
-OUT="${2:-$(cfg paths.transcripts_dir)}"
-NAMES="${3:-$(cfg whisperx.speaker_names)}"
+IN="${1:-$(proj recordings_dir)}"
+OUT="${2:-$(proj transcripts_dir)}"
+NAMES="${3:-$(proj speaker_names)}"
 
 if [[ -z "$IN" || -z "$OUT" ]]; then
-  echo "Usage: bash scripts/transcribe_folder_whisperx.sh [input folder] [output folder] [\"Name1,Name2\"]" >&2
+  echo "Usage: bash scripts/transcribe_folder_whisperx.sh [-p project] [input folder] [output folder] [\"Name1,Name2\"]" >&2
   echo "" >&2
   echo "Or set them once in config.yaml and pass nothing:" >&2
   echo "  paths:" >&2

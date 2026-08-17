@@ -284,3 +284,43 @@ the bar holds while the label switches to "finding speakers".
 `call_processor` only emits those progress lines when its output is being
 captured — on a terminal the rich progress bar already shows this, and the
 extra lines would scribble over it.
+
+## Several projects
+
+One tool, several bodies of work — each with its own folders and speakers:
+
+```yaml
+default_project: castle
+projects:
+  castle:
+    recordings_dir:  ~/Documents/CASTLE BLINDS/Raw Voice Memos
+    transcripts_dir: ~/Documents/CASTLE BLINDS/Timestamped Transcribed Memos
+    speaker_names:   ["Dad", "Isaiah"]
+  interviews:
+    recordings_dir:  ~/Documents/Interviews/raw
+    transcripts_dir: ~/Documents/Interviews/transcripts
+    speaker_names:   ["Isaiah", "Guest"]
+```
+
+```bash
+bash scripts/transcribe_folder.sh                  # default_project
+bash scripts/transcribe_folder.sh -p interviews    # a specific one
+```
+
+Anything a project doesn't set falls back to the top-level `paths:` and
+`whisperx:` sections, so a single-project setup needs no `projects:` block and
+behaves exactly as before. A `-p` name that isn't in the config is an error
+rather than a silent fall-through — a typo shouldn't quietly write a client's
+transcripts into your family folder.
+
+With no `default_project`, a lone project is still used automatically; several
+projects and no default means the top-level settings apply, because guessing
+between them is worse than not guessing.
+
+The web page grows a project picker when projects exist, and switching it fills
+in that project's folder and speakers. Per-project shortcuts work too:
+
+```bash
+bash scripts/install_shortcut.sh castle
+PROJECT=interviews bash scripts/install_shortcut.sh interviews
+```

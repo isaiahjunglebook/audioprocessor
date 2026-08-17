@@ -28,14 +28,28 @@ fi
 
 cd "$REPO"   # config.yaml and output/ are resolved relative to the repo
 
+# -p/--project selects a named block in config.yaml; PROJECT= does the same.
+if [[ "${1:-}" == "-p" || "${1:-}" == "--project" ]]; then
+  PROJECT="${2:-}"; shift 2
+fi
+PROJECT="${PROJECT:-}"
+
 IN="${1:-}"
 OUT="${2:-}"
 
 # Unset folders fall back to config.yaml, so the everyday case is just
 # `bash scripts/transcribe_folder.sh` with nothing to remember or retype.
 if [[ -x "$PY" ]]; then
-  [[ -z "$IN" ]] && IN="$("$PY" -m call_processor.paths paths.recordings_dir 2>/dev/null || true)"
-  [[ -z "$OUT" ]] && OUT="$("$PY" -m call_processor.paths paths.transcripts_dir 2>/dev/null || true)"
+  if [[ -n "$PROJECT" ]] && ! "$PY" -m call_processor.projects --get transcripts_dir --project "$PROJECT" >/dev/null 2>&1; then
+    echo "ERROR: no project named '$PROJECT' in config.yaml." >&2
+    echo "Available: $("$PY" -m call_processor.projects --list 2>/dev/null | tr '\n' ' ')" >&2
+    exit 1
+  fi
+  proj() {
+    "$PY" -m call_processor.projects --get "$1" ${PROJECT:+--project "$PROJECT"} 2>/dev/null || true
+  }
+  [[ -z "$IN" ]] && IN="$(proj recordings_dir)"
+  [[ -z "$OUT" ]] && OUT="$(proj transcripts_dir)"
 fi
 
 if [[ -z "$IN" || -z "$OUT" ]]; then
