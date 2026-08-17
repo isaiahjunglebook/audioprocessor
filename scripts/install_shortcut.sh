@@ -17,6 +17,9 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NAME="${1:-}"
 IN="${2:-}"
 OUT="${3:-}"
+# Which batch script the shortcut runs. Override for the WhisperX pipeline:
+#   SCRIPT=transcribe_folder_whisperx.sh bash scripts/install_shortcut.sh memos
+SCRIPT="${SCRIPT:-transcribe_folder.sh}"
 
 # zsh is the macOS default; fall back to bash's rc file if there's no .zshrc.
 if [[ -n "${ZDOTDIR:-}" || "${SHELL:-}" == *zsh* || -f "$HOME/.zshrc" ]]; then
@@ -46,24 +49,33 @@ if [[ "${2:-}" == "--uninstall" ]]; then
   exit 0
 fi
 
-if [[ -z "$IN" || -z "$OUT" ]]; then
-  echo "ERROR: pass both an input folder and an output folder." >&2
-  exit 1
+if [[ -z "$IN" && -z "$OUT" ]]; then
+  # No folders given: let the script read them from config.yaml at run time,
+  # so editing config.yaml later updates the shortcut with no reinstall.
+  BODY="bash \"$REPO/scripts/$SCRIPT\""
+  WHERE="the folders set in config.yaml (paths.recordings_dir -> paths.transcripts_dir)"
+else
+  if [[ -z "$IN" || -z "$OUT" ]]; then
+    echo "ERROR: pass both folders, or neither (to use config.yaml)." >&2
+    exit 1
+  fi
+  if [[ ! -d "$IN" ]]; then
+    echo "ERROR: input folder not found: $IN" >&2
+    exit 1
+  fi
+  # Absolute paths, resolved now, so the shortcut works from any directory.
+  IN="$(cd "$IN" && pwd)"
+  mkdir -p "$OUT"
+  OUT="$(cd "$OUT" && pwd)"
+  BODY="bash \"$REPO/scripts/$SCRIPT\" \"$IN\" \"$OUT\""
+  WHERE="$IN
+    -> $OUT"
 fi
-if [[ ! -d "$IN" ]]; then
-  echo "ERROR: input folder not found: $IN" >&2
-  exit 1
-fi
-
-# Absolute paths, resolved now, so the shortcut works from any directory.
-IN="$(cd "$IN" && pwd)"
-mkdir -p "$OUT"
-OUT="$(cd "$OUT" && pwd)"
 
 cat >> "$RC" <<SHORTCUT
 $START
 $NAME() {
-  bash "$REPO/scripts/transcribe_folder.sh" "$IN" "$OUT"
+  $BODY
 }
 $END
 SHORTCUT
@@ -73,10 +85,8 @@ echo "Done. Open a NEW Terminal window, then just type:"
 echo ""
 echo "    $NAME"
 echo ""
-echo "It transcribes everything in:"
-echo "    $IN"
-echo "into:"
-echo "    $OUT"
+echo "It transcribes:"
+echo "    $WHERE"
 echo ""
 echo "Recordings already transcribed are skipped, so adding one new memo and"
 echo "typing '$NAME' again processes only that memo."

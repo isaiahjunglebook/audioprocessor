@@ -238,3 +238,36 @@ should be saved, and it runs the batch scripts above. Jobs run one at a time
 slower). It binds to 127.0.0.1 only, because the server starts processes and
 must not be reachable from the network. Nothing is uploaded anywhere — the
 audio goes from your browser to a server on the same machine.
+
+## Set your folders once
+
+Typing long paths on every run gets old. Put them in `config.yaml`:
+
+```yaml
+paths:
+  recordings_dir:  ~/Documents/CASTLE BLINDS/Raw Voice Memos
+  transcripts_dir: ~/Documents/CASTLE BLINDS/Timestamped Transcribed Memos
+whisperx:
+  speaker_names: ["Dad", "Isaiah"]   # most talkative first
+```
+
+Then every entry point works with no arguments:
+
+```bash
+bash scripts/transcribe_folder.sh              # timestamps only
+bash scripts/transcribe_folder_whisperx.sh     # speaker names too
+python3 scripts/web_ui.py                      # page opens pre-filled
+```
+
+Command-line arguments still win over config, and environment variables
+(`WHISPERX_VENV`, `SPEAKERS`, `WHISPER_MODEL`) win over both. `config.yaml` is
+gitignored, so **transcripts and folder paths stay off GitHub** — keep the
+recordings and transcripts outside the repo, in a folder of your own.
+
+Install the one-word shortcut against config rather than fixed folders, so
+editing `config.yaml` later needs no reinstall:
+
+```bash
+bash scripts/install_shortcut.sh memos
+SCRIPT=transcribe_folder_whisperx.sh bash scripts/install_shortcut.sh memos
+```

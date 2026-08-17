@@ -55,3 +55,17 @@ tags:
 paths:
   output_dir: ./output
   profiles_dir: ./profiles
+
+  # Set these two and the batch scripts and web page need no arguments —
+  # `bash scripts/transcribe_folder.sh` with nothing after it just works.
+  # config.yaml is gitignored, so your folder names never reach GitHub.
+  recordings_dir: ""    # e.g. ~/Documents/CASTLE BLINDS/Raw Voice Memos
+  transcripts_dir: ""   # e.g. ~/Documents/CASTLE BLINDS/Timestamped Transcribed Memos
+
+# The WhisperX path: one mixed recording -> speaker-labeled transcript.
+# Used by scripts/transcribe_folder_whisperx.sh and the web page.
+whisperx:
+  venv: ~/Documents/whisperx-tool/.venv   # its own virtualenv, separate from this repo's
+  model: large-v3
+  num_speakers: 2                          # how many people are in the recordings
+  speaker_names: []                        # most talkative FIRST, e.g. ["Dad", "Isaiah"]

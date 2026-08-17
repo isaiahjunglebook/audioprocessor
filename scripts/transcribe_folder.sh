@@ -26,15 +26,25 @@ if [[ -z "${TRANSCRIBE_CAFFEINATED:-}" ]] && command -v caffeinate >/dev/null 2>
   exec caffeinate -i bash "$0" "$@"
 fi
 
+cd "$REPO"   # config.yaml and output/ are resolved relative to the repo
+
 IN="${1:-}"
 OUT="${2:-}"
 
+# Unset folders fall back to config.yaml, so the everyday case is just
+# `bash scripts/transcribe_folder.sh` with nothing to remember or retype.
+if [[ -x "$PY" ]]; then
+  [[ -z "$IN" ]] && IN="$("$PY" -m call_processor.paths paths.recordings_dir 2>/dev/null || true)"
+  [[ -z "$OUT" ]] && OUT="$("$PY" -m call_processor.paths paths.transcripts_dir 2>/dev/null || true)"
+fi
+
 if [[ -z "$IN" || -z "$OUT" ]]; then
-  echo "Usage: bash scripts/transcribe_folder.sh <input folder> <output folder>" >&2
-  echo "Example:" >&2
-  echo "  bash scripts/transcribe_folder.sh \\" >&2
-  echo "    ~/Documents/'CASTLE BLINDS'/'Raw Voice Memos' \\" >&2
-  echo "    ~/Documents/'CASTLE BLINDS'/'Timestamped Transcribed Memos'" >&2
+  echo "Usage: bash scripts/transcribe_folder.sh [input folder] [output folder]" >&2
+  echo "" >&2
+  echo "Or set them once in config.yaml and pass nothing:" >&2
+  echo "  paths:" >&2
+  echo "    recordings_dir:  ~/Documents/CASTLE BLINDS/Raw Voice Memos" >&2
+  echo "    transcripts_dir: ~/Documents/CASTLE BLINDS/Timestamped Transcribed Memos" >&2
   exit 1
 fi
 
@@ -48,7 +58,6 @@ if [[ ! -x "$PY" ]]; then
 fi
 
 mkdir -p "$OUT"
-cd "$REPO"   # config.yaml and output/ are resolved relative to the repo
 
 transcribed=0
 skipped=0

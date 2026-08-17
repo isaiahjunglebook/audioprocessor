@@ -52,6 +52,18 @@ DEFAULTS: dict = {
     "paths": {
         "output_dir": "./output",
         "profiles_dir": "./profiles",
+        # Where your recordings live and where finished transcripts go. Set
+        # these once and the batch scripts and web page need no arguments.
+        # Kept out of git (config.yaml is gitignored) so paths stay private.
+        "recordings_dir": "",
+        "transcripts_dir": "",
+    },
+    # Settings for the WhisperX path (single mixed recording -> speaker labels).
+    "whisperx": {
+        "venv": "~/Documents/whisperx-tool/.venv",
+        "model": "large-v3",
+        "num_speakers": 2,
+        "speaker_names": [],   # most talkative first, e.g. ["Dad", "Isaiah"]
     },
 }
 

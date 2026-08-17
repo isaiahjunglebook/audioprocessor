@@ -21,28 +21,43 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO"   # config.yaml is resolved relative to the repo
+
+# The converter is pure standard library, so any Python 3 can run it.
+CONVERT_PY="${CONVERT_PY:-$REPO/.venv/bin/python}"
+[[ -x "$CONVERT_PY" ]] || CONVERT_PY="$(command -v python3)"
+
+cfg() { "$CONVERT_PY" -m call_processor.paths "$1" 2>/dev/null || true; }
+
+# Environment beats config.yaml, which beats the built-in default.
+WHISPERX_VENV="${WHISPERX_VENV:-$(cfg whisperx.venv)}"
 WHISPERX_VENV="${WHISPERX_VENV:-$HOME/Documents/whisperx-tool/.venv}"
+SPEAKERS="${SPEAKERS:-$(cfg whisperx.num_speakers)}"
 SPEAKERS="${SPEAKERS:-2}"
+WHISPER_MODEL="${WHISPER_MODEL:-$(cfg whisperx.model)}"
 WHISPER_MODEL="${WHISPER_MODEL:-large-v3}"
 
 WHISPERX="$WHISPERX_VENV/bin/whisperx"
 VENV_PY="$WHISPERX_VENV/bin/python"
-# The converter is pure standard library, so any Python 3 can run it.
-CONVERT_PY="${CONVERT_PY:-$REPO/.venv/bin/python}"
-[[ -x "$CONVERT_PY" ]] || CONVERT_PY="$(command -v python3)"
 
 if [[ -z "${TRANSCRIBE_CAFFEINATED:-}" ]] && command -v caffeinate >/dev/null 2>&1; then
   export TRANSCRIBE_CAFFEINATED=1
   exec caffeinate -i bash "$0" "$@"
 fi
 
-IN="${1:-}"
-OUT="${2:-}"
-NAMES="${3:-}"
+IN="${1:-$(cfg paths.recordings_dir)}"
+OUT="${2:-$(cfg paths.transcripts_dir)}"
+NAMES="${3:-$(cfg whisperx.speaker_names)}"
 
 if [[ -z "$IN" || -z "$OUT" ]]; then
-  echo "Usage: bash scripts/transcribe_folder_whisperx.sh <input folder> <output folder> [\"Name1,Name2\"]" >&2
-  echo "Names go in order of who talks most, e.g. \"Dad,Isaiah\"" >&2
+  echo "Usage: bash scripts/transcribe_folder_whisperx.sh [input folder] [output folder] [\"Name1,Name2\"]" >&2
+  echo "" >&2
+  echo "Or set them once in config.yaml and pass nothing:" >&2
+  echo "  paths:" >&2
+  echo "    recordings_dir:  ~/Documents/CASTLE BLINDS/Raw Voice Memos" >&2
+  echo "    transcripts_dir: ~/Documents/CASTLE BLINDS/Timestamped Transcribed Memos" >&2
+  echo "  whisperx:" >&2
+  echo "    speaker_names: [\"Dad\", \"Isaiah\"]   # most talkative first" >&2
   exit 1
 fi
 if [[ ! -d "$IN" ]]; then
@@ -65,7 +80,6 @@ fi
 
 JSON_DIR="$OUT/whisperx-json"
 mkdir -p "$OUT" "$JSON_DIR"
-cd "$REPO"
 
 transcribed=0
 skipped=0

@@ -20,6 +20,7 @@ import json
 import queue
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import webbrowser
@@ -29,6 +30,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))  # importable however the script was launched
+
 AUDIO_EXTS = {".m4a", ".mp3", ".wav", ".flac", ".aac"}
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2GB — a very long recording
 
@@ -36,6 +39,24 @@ JOBS: dict[int, dict] = {}
 JOB_QUEUE: "queue.Queue[int]" = queue.Queue()
 _lock = threading.Lock()
 _next_id = 1
+
+
+def _from_config(key: str, fallback: str) -> str:
+    """Read a setting from config.yaml, falling back if it isn't configured.
+
+    Imported lazily and failure-tolerantly: the page must still start for
+    someone who has no config.yaml (or no PyYAML) yet.
+    """
+    try:
+        from call_processor.paths import format_value, lookup
+        from call_processor import config as config_mod
+        value = format_value(lookup(config_mod.load_config(None), key),
+                             is_path=key.endswith(("_dir", "venv")))
+        return value or fallback
+    except Exception:
+        return fallback
+
+
 DEFAULT_OUT = str(Path.home() / "Documents" / "Transcripts")
 
 
@@ -150,7 +171,7 @@ PAGE = """<!doctype html>
 </select>
 
 <label for="names">Who's talking, most talkative first</label>
-<input id="names" value="Dad,Isaiah" spellcheck="false">
+<input id="names" value="__DEFAULT_NAMES__" spellcheck="false">
 <div class="hint">Only used for the speaker-names option. Comma separated.</div>
 
 <h2>Jobs</h2>
@@ -203,7 +224,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         route = urlparse(self.path).path
         if route == "/":
-            page = PAGE.replace("__DEFAULT_OUT__", self.server.default_out)
+            page = (PAGE.replace("__DEFAULT_OUT__", self.server.default_out)
+                        .replace("__DEFAULT_NAMES__", self.server.default_names))
             self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
         elif route == "/jobs":
             with _lock:
@@ -266,7 +288,12 @@ class Handler(BaseHTTPRequestHandler):
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Local drag-and-drop transcription page.")
     p.add_argument("--port", type=int, default=8756)
-    p.add_argument("--out", default=DEFAULT_OUT, help="Default output folder shown on the page")
+    p.add_argument("--out", default=None,
+                   help="Default output folder shown on the page "
+                        "(default: paths.transcripts_dir from config.yaml)")
+    p.add_argument("--names", default=None,
+                   help="Default speaker names, most talkative first "
+                        "(default: whisperx.speaker_names from config.yaml)")
     p.add_argument("--no-browser", action="store_true", help="Don't open a browser window")
     args = p.parse_args(argv)
 
@@ -275,7 +302,8 @@ def main(argv: list[str] | None = None) -> int:
     # 127.0.0.1, never 0.0.0.0: this server starts processes, so it must not be
     # reachable from anything but this machine.
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    server.default_out = args.out
+    server.default_out = args.out or _from_config("paths.transcripts_dir", DEFAULT_OUT)
+    server.default_names = args.names or _from_config("whisperx.speaker_names", "")
     url = f"http://127.0.0.1:{args.port}"
     print(f"\n  Transcriber running at {url}")
     print("  Leave this window open. Press Control-C to stop.\n")
